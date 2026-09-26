@@ -1,19 +1,19 @@
-const tintColorLight = '#2f95dc';
-const tintColorDark = '#fff';
+import { palettes } from "@/src/theme";
 
+/** Conservé pour compatibilité avec le gabarit Expo : les couleurs viennent de src/theme.ts. */
 export default {
   light: {
-    text: '#000',
-    background: '#fff',
-    tint: tintColorLight,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorLight,
+    text: palettes.light.ink,
+    background: palettes.light.background,
+    tint: palettes.light.accent,
+    tabIconDefault: palettes.light.muted,
+    tabIconSelected: palettes.light.accent,
   },
   dark: {
-    text: '#fff',
-    background: '#000',
-    tint: tintColorDark,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorDark,
+    text: palettes.dark.ink,
+    background: palettes.dark.background,
+    tint: palettes.dark.accent,
+    tabIconDefault: palettes.dark.muted,
+    tabIconSelected: palettes.dark.accent,
   },
 };
