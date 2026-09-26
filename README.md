@@ -57,17 +57,15 @@ Les favoris et le cache des arrêts (24 h) restent dans le navigateur ou sur l�
 
 `public/manifest.json` et `public/sw.js` permettent d’installer le site. Le service worker met en cache l’interface, pas les appels vers data.grandlyon.com. L’installation depuis l’écran d’accueil demande une adresse HTTPS.
 
-Export du site statique :
+Le site public est construit par GitHub Actions (`npx expo export -p web`) puis publié sur GitHub Pages : https://zoliveallegret.github.io/tcl/
 
-```bash
-npx expo export --platform web
-```
+Il n’y a pas de serveur à tenir. `node_modules` et `dist/` ne sont pas dans Git : GitHub les recrée à chaque push sur `main`.
 
-Les fichiers sont dans `dist/`. Pour les servir avec les en-têtes de sécurité :
+Pour un essai local du build :
 
 ```bash
 npm run export:web
 npm run serve:web
 ```
 
-Le serveur écoute sur `127.0.0.1:4173`. Sur une machine distante : `HOST=0.0.0.0 PORT=4173 npm run serve:web`, derrière HTTPS (un service worker et l’installation PWA l’exigent).
+Le serveur écoute sur `127.0.0.1:4173`.

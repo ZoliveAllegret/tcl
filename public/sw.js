@@ -1,4 +1,4 @@
-const CACHE = "tcl-shell-v3";
+const CACHE = "tcl-shell-v4";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -43,7 +43,8 @@ async function networkFirst(request) {
     }
     return response;
   } catch {
-    return (await cache.match(request)) || (await cache.match("/")) || Response.error();
+    const home = new Request(new URL("./", self.registration.scope));
+    return (await cache.match(request)) || (await cache.match(home)) || Response.error();
   }
 }
 

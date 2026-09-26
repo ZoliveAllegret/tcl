@@ -4,21 +4,21 @@
   "short_name": "TCL",
   "description": "Arrêts, prochains départs, lignes et carte du réseau TCL de Lyon",
   "lang": "fr",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": ".",
+  "scope": ".",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#F2F3F6",
   "theme_color": "#3B34F0",
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"

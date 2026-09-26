@@ -18,8 +18,8 @@ export default function Root({ children }: { children: ReactNode }) {
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-title" content="TCL" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <link rel="manifest" href="/manifest.json" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="manifest" href="manifest.json" />
+        <link rel="apple-touch-icon" href="apple-touch-icon.png" />
         <script dangerouslySetInnerHTML={{ __html: serviceWorker }} />
 
         {/*
@@ -40,7 +40,9 @@ export default function Root({ children }: { children: ReactNode }) {
 const serviceWorker = `
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    const scopeUrl = new URL('.', document.baseURI);
+    const scriptUrl = new URL('sw.js', scopeUrl);
+    navigator.serviceWorker.register(scriptUrl.href, { scope: scopeUrl.href }).catch(() => {});
   });
 }
 `;
