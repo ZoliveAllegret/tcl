@@ -49,3 +49,30 @@ jobs:
           path: dist
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  site:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx expo export -p web
+      - name: Publish the static site on branch web
+        working-directory: dist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git init
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add -A
+          git commit -m "Site statique"
+          git branch -M web
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/ZoliveAllegret/tcl.git" web
