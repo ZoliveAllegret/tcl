@@ -4,7 +4,7 @@ import { FlatList, View } from "react-native";
 
 import { useNavBarInset } from "@/components/NavBar";
 import { StopRow } from "@/components/StopRow";
-import { Button, EmptyState, ScreenHeader, SkeletonRows } from "@/components/ui";
+import { Button, EmptyState, ProgressMeter, ScreenHeader, SkeletonRows } from "@/components/ui";
 import { useFavorites } from "@/src/favorites/FavoritesProvider";
 import { useStops } from "@/src/stops/StopsProvider";
 import { makeStyles } from "@/src/theme";
@@ -13,7 +13,7 @@ import type { Stop } from "@/src/types";
 export default function FavoritesScreen() {
   const styles = useStyles();
   const { ids, ready } = useFavorites();
-  const { stops, loading } = useStops();
+  const { stops, loading, loadedCount, totalCount } = useStops();
   const navInset = useNavBarInset();
 
   const favorites = useMemo(
@@ -41,7 +41,12 @@ export default function FavoritesScreen() {
         ListEmptyComponent={
           <View style={styles.inset}>
             {waiting ? (
-              <SkeletonRows count={3} />
+              <View style={{ gap: 12 }}>
+                {loading ? (
+                  <ProgressMeter label="Chargement des arrêts" percent={totalCount ? (loadedCount / totalCount) * 100 : 0} />
+                ) : null}
+                <SkeletonRows count={3} />
+              </View>
             ) : (
               <EmptyState
                 icon="star"

@@ -4,10 +4,10 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { LineChip } from "@/components/LineChip";
 import { useNavBarInset } from "@/components/NavBar";
 import { Icon } from "@/components/Icon";
-import { EmptyState, ScreenHeader, SearchField, SkeletonRows } from "@/components/ui";
+import { EmptyState, ProgressMeter, ScreenHeader, SearchField, SkeletonRows } from "@/components/ui";
 import { formatClock, normalizeText } from "@/src/format";
 import { distanceMeters } from "@/src/geo";
-import { planTrips, type Trip } from "@/src/schedule/planner";
+import { planTrips, type Trip, type TripProgress } from "@/src/schedule/planner";
 import { useStops } from "@/src/stops/StopsProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 import type { Stop } from "@/src/types";
@@ -59,6 +59,7 @@ export default function TripScreen() {
   const [activeField, setActiveField] = useState<"from" | "to" | null>(null);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<TripProgress>({ label: "Calcul du trajet", percent: 0 });
   const [error, setError] = useState<string | null>(null);
 
   const suggestions = useMemo(() => {
@@ -94,7 +95,8 @@ export default function TripScreen() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    void planTrips(fromStop.id, toStop.id, new Date(), stops)
+    setProgress({ label: "Calcul du trajet", percent: 0 });
+    void planTrips(fromStop.id, toStop.id, new Date(), stops, setProgress)
       .then((next) => {
         if (!cancelled) {
           setTrips(next);
@@ -200,7 +202,7 @@ export default function TripScreen() {
 
       {loading ? (
         <View style={styles.inset}>
-          <Text style={styles.hint}>Calcul du trajet…</Text>
+          <ProgressMeter label={progress.label} percent={progress.percent} />
           <SkeletonRows count={2} />
         </View>
       ) : null}

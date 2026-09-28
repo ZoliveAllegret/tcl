@@ -17,6 +17,7 @@ type StopsContextValue = {
   loading: boolean;
   error: string | null;
   loadedCount: number;
+  totalCount: number | null;
   refresh: () => Promise<void>;
   getStop: (id: number) => Stop | undefined;
 };
@@ -40,12 +41,16 @@ export function StopsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loadedCount, setLoadedCount] = useState(0);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const next = await fetchAllStops(setLoadedCount);
+      const next = await fetchAllStops((loaded, total) => {
+        setLoadedCount(loaded);
+        setTotalCount(total);
+      });
       setStops(next);
       const payload: CachePayload = { savedAt: Date.now(), stops: next };
       await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(payload));
@@ -89,10 +94,11 @@ export function StopsProvider({ children }: { children: ReactNode }) {
       loading,
       error,
       loadedCount,
+      totalCount,
       refresh,
       getStop: (id: number) => index.get(id),
     }),
-    [stops, loading, error, loadedCount, refresh, index],
+    [stops, loading, error, loadedCount, totalCount, refresh, index],
   );
 
   return <StopsContext.Provider value={value}>{children}</StopsContext.Provider>;

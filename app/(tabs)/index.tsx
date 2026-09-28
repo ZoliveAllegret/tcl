@@ -4,7 +4,7 @@ import { SectionList, Text, TextInput, View } from "react-native";
 
 import { useNavBarInset } from "@/components/NavBar";
 import { StopRow } from "@/components/StopRow";
-import { Badge, Button, EmptyState, ScreenHeader, SearchField, SectionLabel, SkeletonRows } from "@/components/ui";
+import { Badge, Button, EmptyState, ProgressMeter, ScreenHeader, SearchField, SectionLabel, SkeletonRows } from "@/components/ui";
 import { useFavorites } from "@/src/favorites/FavoritesProvider";
 import { distanceMeters, formatDistance, nearestStops } from "@/src/geo";
 import { normalizeText } from "@/src/format";
@@ -20,7 +20,7 @@ function openStop(stop: Stop) {
 
 export default function SearchScreen() {
   const styles = useStyles();
-  const { stops, loading, error, loadedCount, refresh } = useStops();
+  const { stops, loading, error, loadedCount, totalCount, refresh } = useStops();
   const { ids } = useFavorites();
   const userLocation = useUserLocation();
   const [query, setQuery] = useState("");
@@ -139,9 +139,10 @@ export default function SearchScreen() {
           <View style={styles.inset}>
             {waiting ? (
               <View style={styles.loading}>
-                <Text style={styles.loadingLabel}>
-                  {loadedCount > 0 ? `${loadedCount} arrêts chargés…` : "Chargement des arrêts TCL…"}
-                </Text>
+                <ProgressMeter
+                  label="Chargement des arrêts"
+                  percent={totalCount ? (loadedCount / totalCount) * 100 : 0}
+                />
                 <SkeletonRows />
               </View>
             ) : failed ? (
@@ -192,9 +193,5 @@ const useStyles = makeStyles((t) => ({
   loading: {
     gap: t.space.md,
     paddingTop: t.space.md,
-  },
-  loadingLabel: {
-    ...t.type.caption,
-    color: t.colors.muted,
   },
 }));

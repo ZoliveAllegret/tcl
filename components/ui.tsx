@@ -410,6 +410,26 @@ const useEmptyStyles = makeStyles((t) => ({
   },
 }));
 
+/** Barre de progression, de 0 à 100. */
+export function ProgressMeter({ label, percent }: { label: string; percent: number }) {
+  const t = useTheme();
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  return (
+    <View style={{ gap: t.space.sm }}>
+      <Text style={{ ...t.type.caption, fontWeight: "700", color: t.colors.muted }}>
+        {label} · {value} %
+      </Text>
+      <View
+        accessibilityRole="progressbar"
+        accessibilityValue={{ min: 0, max: 100, now: value }}
+        style={{ height: 8, borderRadius: 4, backgroundColor: t.colors.surfaceMuted, overflow: "hidden" }}
+      >
+        <View style={{ width: `${value}%`, height: "100%", borderRadius: 4, backgroundColor: t.colors.accent }} />
+      </View>
+    </View>
+  );
+}
+
 /** Squelette de chargement pour les listes. */
 export function SkeletonRows({ count = 4 }: { count?: number }) {
   const t = useTheme();

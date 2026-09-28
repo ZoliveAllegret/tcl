@@ -1,7 +1,7 @@
 import { fetchPassages } from "@/src/api/grandLyon";
 import { normalizeText } from "@/src/format";
 import { distanceMeters } from "@/src/geo";
-import { loadRideGraph, type RideLink } from "@/src/schedule/theoretical";
+import { isRideGraphReady, loadRideGraph, type RideLink } from "@/src/schedule/theoretical";
 import type { Stop } from "@/src/types";
 
 export type TripLeg = {
@@ -19,6 +19,11 @@ export type Trip = {
   legs: TripLeg[];
   /** Vrai quand un horaire de passage n'a pas été trouvé. */
   provisional: boolean;
+};
+
+export type TripProgress = {
+  label: string;
+  percent: number;
 };
 
 const TRANSFER_MINUTES = 5;
@@ -58,18 +63,38 @@ type SearchNode = {
   walk: boolean;
 };
 
-export async function planTrips(fromStopId: number, toStopId: number, at: Date, stops: Stop[]): Promise<Trip[]> {
+export async function planTrips(
+  fromStopId: number,
+  toStopId: number,
+  at: Date,
+  stops: Stop[],
+  onProgress?: (progress: TripProgress) => void,
+): Promise<Trip[]> {
   const from = stops.find((stop) => stop.id === fromStopId);
   const to = stops.find((stop) => stop.id === toStopId);
   if (!from || !to || samePlace(from, to)) {
     return [];
   }
 
-  const [rides, places] = await Promise.all([loadRideGraph(), Promise.resolve(placeIndex(stops))]);
+  const cached = isRideGraphReady();
+  if (!cached) {
+    onProgress?.({ label: "Téléchargement du réseau", percent: 0 });
+  }
+  const [rides, places] = await Promise.all([
+    loadRideGraph((percent) => {
+      if (!cached) {
+        onProgress?.({ label: "Téléchargement du réseau", percent });
+      }
+    }),
+    Promise.resolve(placeIndex(stops)),
+  ]);
+  onProgress?.({ label: "Calcul du trajet", percent: 0 });
   const walks = walkLinks(stops);
   const fromIds = new Set(places.get(fromStopId) ?? [fromStopId]);
   const toIds = new Set(places.get(toStopId) ?? [toStopId]);
-  const drafts = findPaths(rides, walks, fromIds, toIds);
+  const drafts = await findPaths(rides, walks, fromIds, toIds, (percent) => {
+    onProgress?.({ label: "Calcul du trajet", percent });
+  });
   const passages = new Map<number, Awaited<ReturnType<typeof fetchPassages>> | null>();
   const trips: Trip[] = [];
   for (const draft of drafts) {
@@ -80,12 +105,13 @@ export async function planTrips(fromStopId: number, toStopId: number, at: Date, 
   );
 }
 
-function findPaths(
+async function findPaths(
   rides: Map<number, RideLink[]>,
   walks: Map<number, WalkLink[]>,
   fromIds: Set<number>,
   toIds: Set<number>,
-): Ride[][] {
+  onProgress?: (percent: number) => void,
+): Promise<Ride[][]> {
   const heap = new Heap<SearchNode>((left, right) => left.time < right.time || (left.time === right.time && left.transfers < right.transfers));
   const best = new Map<string, number>();
   const found: { time: number; signature: string; rides: Ride[] }[] = [];
@@ -115,6 +141,12 @@ function findPaths(
       break;
     }
     visits += 1;
+    if (visits % 2500 === 0) {
+      onProgress?.(Math.min(99, Math.round((visits / MAX_VISITS) * 100)));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    }
     const key = `${node.stopId}\0${node.lineKey}\0${node.transfers}`;
     const known = best.get(key);
     if (known != null && known < node.time) {
@@ -176,6 +208,7 @@ function findPaths(
     }
   }
 
+  onProgress?.(100);
   return found
     .sort((left, right) => left.time - right.time || left.rides.length - right.rides.length)
     .slice(0, MAX_RESULTS)

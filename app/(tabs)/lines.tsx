@@ -5,7 +5,7 @@ import { Pressable, SectionList, Text, TextInput, useWindowDimensions, View } fr
 import { Icon } from "@/components/Icon";
 import { LineChip } from "@/components/LineChip";
 import { useNavBarInset } from "@/components/NavBar";
-import { EmptyState, ScreenHeader, SearchField, SectionLabel, SkeletonRows } from "@/components/ui";
+import { EmptyState, ProgressMeter, ScreenHeader, SearchField, SectionLabel, SkeletonRows } from "@/components/ui";
 import { useDisruptionCounts } from "@/src/hooks/useDisruptionCounts";
 import { collectLines, sectionLines, type LineSummary } from "@/src/lines/groupLines";
 import { getLineName, loadLineNames } from "@/src/schedule/theoretical";
@@ -15,7 +15,7 @@ import { makeStyles, useTheme } from "@/src/theme";
 
 export default function LinesScreen() {
   const styles = useStyles();
-  const { stops, loading } = useStops();
+  const { stops, loading, loadedCount, totalCount } = useStops();
   const [query, setQuery] = useState("");
   const [compact, setCompact] = useState(false);
   const { width } = useWindowDimensions();
@@ -123,7 +123,10 @@ export default function LinesScreen() {
         ListEmptyComponent={
           <View style={styles.inset}>
             {loading ? (
-              <SkeletonRows count={6} />
+              <View style={{ gap: 12 }}>
+                <ProgressMeter label="Chargement des arrêts" percent={totalCount ? (loadedCount / totalCount) * 100 : 0} />
+                <SkeletonRows count={6} />
+              </View>
             ) : (
               <EmptyState icon="empty" title="Aucune ligne" message="Vérifiez le numéro saisi." />
             )}

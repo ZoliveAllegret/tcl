@@ -1,4 +1,10 @@
+import { Platform } from "react-native";
+
 import { grandLyonConfig } from "@/src/config";
+import { forEachDataLine, inflateText, readZipEntries } from "@/src/schedule/gtfsZip";
+import { collectRideLinks, unpackRideGraph, type PackedRideGraph, type RideLink } from "@/src/schedule/rideGraph";
+
+export type { RideLink };
 
 export type ScheduledDeparture = {
   line: string;
@@ -59,81 +65,6 @@ function departureInstant(serviceDay: string, gtfsTime: string): number {
 
 function formatTime(at: number): string {
   return new Date(at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-}
-
-function readZipEntries(buffer: ArrayBuffer): Map<string, Uint8Array> {
-  const bytes = new Uint8Array(buffer);
-  const view = new DataView(buffer);
-  const decoder = new TextDecoder();
-  const entries = new Map<string, Uint8Array>();
-  let offset = 0;
-
-  while (offset + 30 <= bytes.length) {
-    if (view.getUint32(offset, true) !== 0x04034b50) {
-      break;
-    }
-    const flags = view.getUint16(offset + 6, true);
-    const method = view.getUint16(offset + 8, true);
-    const compressedSize = view.getUint32(offset + 18, true);
-    const nameLength = view.getUint16(offset + 26, true);
-    const extraLength = view.getUint16(offset + 28, true);
-    const nameStart = offset + 30;
-    const name = decoder.decode(bytes.subarray(nameStart, nameStart + nameLength));
-    const dataStart = nameStart + nameLength + extraLength;
-    if ((flags & 8) !== 0 || method !== 8) {
-      throw new Error("Le fichier d'horaires TCL a un format inattendu.");
-    }
-    entries.set(name, bytes.subarray(dataStart, dataStart + compressedSize));
-    offset = dataStart + compressedSize;
-  }
-
-  return entries;
-}
-
-function inflateStream(data: Uint8Array): ReadableStream<Uint8Array> {
-  const copy = new Uint8Array(data.byteLength);
-  copy.set(data);
-  return new Blob([copy]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-}
-
-async function inflateText(data: Uint8Array): Promise<string> {
-  return new TextDecoder().decode(await new Response(inflateStream(data)).arrayBuffer());
-}
-
-async function forEachDataLine(data: Uint8Array, onLine: (line: string) => void): Promise<void> {
-  const stream = inflateStream(data);
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let pending = "";
-
-  const consume = (flush: boolean) => {
-    pending += flush ? decoder.decode() : "";
-    let newline = pending.indexOf("\n");
-    while (newline >= 0) {
-      let line = pending.slice(0, newline);
-      pending = pending.slice(newline + 1);
-      if (line.endsWith("\r")) {
-        line = line.slice(0, -1);
-      }
-      if (line) {
-        onLine(line);
-      }
-      newline = pending.indexOf("\n");
-    }
-  };
-
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) {
-      consume(true);
-      if (pending) {
-        onLine(pending.endsWith("\r") ? pending.slice(0, -1) : pending);
-      }
-      return;
-    }
-    pending += decoder.decode(chunk.value, { stream: true });
-    consume(false);
-  }
 }
 
 function rememberTime(group: DirectionGroup, at: number, maxPerDirection: number) {
@@ -366,24 +297,62 @@ async function buildIndex(
   return index;
 }
 
-export type RideLink = {
-  to: number;
-  line: string;
-  direction: string;
-  minutes: number;
-};
-
 let rideGraph: Promise<Map<number, RideLink[]>> | null = null;
+let rideGraphReady = false;
 
-/** Arcs de parcours : chaque course relie ses arrêts successifs, variantes comprises. */
-export function loadRideGraph(): Promise<Map<number, RideLink[]>> {
+export function isRideGraphReady(): boolean {
+  return rideGraphReady;
+}
+
+/** Arcs de parcours. Sur le web, le fichier préparé reprend exactement le même graphe. */
+export function loadRideGraph(onProgress?: (percent: number) => void): Promise<Map<number, RideLink[]>> {
+  if (rideGraphReady) {
+    onProgress?.(100);
+  }
   if (!rideGraph) {
-    rideGraph = buildRideGraph().catch((error: unknown) => {
-      rideGraph = null;
-      throw error;
-    });
+    const load = Platform.OS === "web" ? loadPackedRideGraph(onProgress).catch(() => buildRideGraph()) : buildRideGraph();
+    rideGraph = load
+      .then((graph) => {
+        rideGraphReady = true;
+        onProgress?.(100);
+        return graph;
+      })
+      .catch((error: unknown) => {
+        rideGraph = null;
+        throw error;
+      });
   }
   return rideGraph;
+}
+
+async function loadPackedRideGraph(onProgress?: (percent: number) => void): Promise<Map<number, RideLink[]>> {
+  const url = typeof document === "undefined" ? "/ride-graph.json" : new URL("ride-graph.json", document.baseURI).href;
+  const response = await fetch(url);
+  if (!response.ok || !response.body) {
+    throw new Error("Le réseau préparé est indisponible.");
+  }
+  const total = Number(response.headers.get("content-length")) || 0;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      break;
+    }
+    chunks.push(chunk.value);
+    received += chunk.value.byteLength;
+    if (total > 0) {
+      onProgress?.(Math.min(99, Math.round((received / total) * 100)));
+    }
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return unpackRideGraph(JSON.parse(new TextDecoder().decode(bytes)) as PackedRideGraph);
 }
 
 async function buildRideGraph(): Promise<Map<number, RideLink[]>> {
@@ -394,131 +363,7 @@ async function buildRideGraph(): Promise<Map<number, RideLink[]>> {
   if (!routes || !trips || !stopTimes) {
     throw new Error("Le réseau théorique TCL est incomplet.");
   }
-
-  const routeToCode = new Map<string, string>();
-  const routeLines = (await inflateText(routes)).split("\n");
-  const routeHeader = routeLines[0]?.replace(/^\uFEFF/, "").split(",") ?? [];
-  const routeIndex = Object.fromEntries(routeHeader.map((name, index) => [name.trim(), index]));
-  for (const rawLine of routeLines.slice(1)) {
-    const line = rawLine.replace(/\r$/, "");
-    if (!line) {
-      continue;
-    }
-    const fields = line.split(",");
-    const routeId = fields[routeIndex.route_id];
-    const code = fields[routeIndex.route_short_name];
-    if (routeId && code) {
-      routeToCode.set(routeId, code);
-    }
-  }
-
-  const tripInfo = new Map<string, { line: string; direction: string }>();
-  const tripLines = (await inflateText(trips)).split("\n");
-  const tripHeader = tripLines[0]?.replace(/^\uFEFF/, "").split(",") ?? [];
-  const tripIndex = Object.fromEntries(tripHeader.map((name, index) => [name.trim(), index]));
-  for (const rawLine of tripLines.slice(1)) {
-    const line = rawLine.replace(/\r$/, "");
-    if (!line) {
-      continue;
-    }
-    const fields = line.split(",");
-    const code = routeToCode.get(fields[tripIndex.route_id]);
-    const direction = fields[tripIndex.trip_headsign];
-    const tripId = fields[tripIndex.trip_id];
-    if (code && direction && tripId) {
-      tripInfo.set(tripId, { line: code, direction });
-    }
-  }
-
-  let tripColumn = 0;
-  let timeColumn = 2;
-  let stopColumn = 3;
-  let sequenceColumn = 4;
-
-  const readColumns = (line: string, header: { done: boolean }) => {
-    const fields = line.replace(/^\uFEFF/, "").split(",");
-    if (!header.done) {
-      header.done = true;
-      if (fields[0] === "trip_id") {
-        tripColumn = fields.indexOf("trip_id");
-        timeColumn = fields.indexOf("departure_time");
-        stopColumn = fields.indexOf("stop_id");
-        sequenceColumn = fields.indexOf("stop_sequence");
-        return null;
-      }
-    }
-    return fields;
-  };
-
-  const byTrip = new Map<string, number[]>();
-  const header = { done: false };
-  await forEachDataLine(stopTimes, (line) => {
-    const fields = readColumns(line, header);
-    if (!fields) {
-      return;
-    }
-    const tripId = fields[tripColumn];
-    const info = tripInfo.get(tripId);
-    if (!info) {
-      return;
-    }
-    const stopId = Number(fields[stopColumn]);
-    const sequence = Number(fields[sequenceColumn]);
-    const minutes = clockMinutes(fields[timeColumn]);
-    if (!Number.isFinite(stopId) || minutes == null) {
-      return;
-    }
-    const packed = byTrip.get(tripId) ?? [];
-    packed.push(Number.isFinite(sequence) ? sequence : packed.length / 3, stopId, minutes);
-    byTrip.set(tripId, packed);
-  });
-
-  const grouped = new Map<number, Map<string, RideLink>>();
-  for (const [tripId, packed] of byTrip) {
-    const info = tripInfo.get(tripId);
-    if (!info || packed.length < 6) {
-      continue;
-    }
-    const points: { sequence: number; stopId: number; minutes: number }[] = [];
-    for (let index = 0; index < packed.length; index += 3) {
-      points.push({ sequence: packed[index], stopId: packed[index + 1], minutes: packed[index + 2] });
-    }
-    points.sort((left, right) => left.sequence - right.sequence);
-    for (let index = 1; index < points.length; index += 1) {
-      const from = points[index - 1];
-      const to = points[index];
-      if (from.stopId === to.stopId) {
-        continue;
-      }
-      let minutes = to.minutes - from.minutes;
-      if (minutes < 0) {
-        minutes += 24 * 60;
-      }
-      if (minutes <= 0 || minutes > 90) {
-        continue;
-      }
-      const bucket = grouped.get(from.stopId) ?? new Map<string, RideLink>();
-      const key = `${to.stopId}\0${info.line}\0${info.direction}`;
-      const current = bucket.get(key);
-      if (!current || minutes < current.minutes) {
-        bucket.set(key, { to: to.stopId, line: info.line, direction: info.direction, minutes });
-      }
-      grouped.set(from.stopId, bucket);
-    }
-  }
-
-  return new Map([...grouped].map(([stopId, links]) => [stopId, [...links.values()]]));
-}
-
-function clockMinutes(value: string | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-  const match = value.match(/^(\d+):(\d{2})/);
-  if (!match) {
-    return null;
-  }
-  return Number(match[1]) * 60 + Number(match[2]);
+  return collectRideLinks(await inflateText(routes), await inflateText(trips), (onLine) => forEachDataLine(stopTimes, onLine));
 }
 
 /** Horaires des 20 prochaines heures, uniquement pour les arrêts demandés. */

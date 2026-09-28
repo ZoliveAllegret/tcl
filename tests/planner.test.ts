@@ -10,6 +10,7 @@ jest.mock("@/src/api/grandLyon", () => ({
 }));
 
 jest.mock("@/src/schedule/theoretical", () => ({
+  isRideGraphReady: () => true,
   loadRideGraph: () => Promise.resolve(mockLinks),
 }));
 

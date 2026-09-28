@@ -12,6 +12,7 @@ import type { LatLng, Passage, Stop, Vehicle } from "@/src/types";
 
 type TableResponse<T> = {
   values?: T[];
+  nb_records?: number;
 };
 
 type RawStop = {
@@ -80,10 +81,20 @@ function mapPassage(row: RawPassage): Passage {
   };
 }
 
-export async function fetchAllStops(onProgress?: (count: number) => void): Promise<Stop[]> {
+export async function fetchAllStops(onProgress?: (loaded: number, total: number | null) => void): Promise<Stop[]> {
   const stops: Stop[] = [];
   const seen = new Set<number>();
   let start = 1;
+  let total: number | null = null;
+  try {
+    const summary = await fetchJson<TableResponse<RawStop>>(grandLyonConfig.stopsUrl.replace(/\/all\.json$/, ".json"));
+    if (typeof summary.nb_records === "number" && summary.nb_records > 0) {
+      total = summary.nb_records;
+    }
+  } catch {
+    total = null;
+  }
+  onProgress?.(0, total);
 
   while (start < 50_000) {
     const url = `${grandLyonConfig.stopsUrl}?compact=false&maxfeatures=${PAGE_SIZE}&start=${start}`;
@@ -98,7 +109,7 @@ export async function fetchAllStops(onProgress?: (count: number) => void): Promi
       stops.push(mapStop(row));
       added += 1;
     }
-    onProgress?.(stops.length);
+    onProgress?.(stops.length, total);
     if (added === 0 || values.length < PAGE_SIZE) {
       break;
     }
