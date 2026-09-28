@@ -44,11 +44,23 @@ type ScreenHeaderProps = {
   children?: ReactNode;
 };
 
+/** Marge haute. Dans Safari, l'encoche est déjà hors de la page : la réajouter décale tout l'écran. */
+export function useTopInset(): number {
+  const insets = useSafeAreaInsets();
+  if (Platform.OS !== "web" || typeof window === "undefined") {
+    return insets.top;
+  }
+  const standalone =
+    window.matchMedia("(display-mode: standalone)").matches ||
+    (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+  return standalone ? insets.top : 0;
+}
+
 export function ScreenHeader({ title, subtitle, right, children }: ScreenHeaderProps) {
   const styles = useHeaderStyles();
-  const insets = useSafeAreaInsets();
+  const topInset = useTopInset();
   return (
-    <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+    <View style={[styles.header, { paddingTop: topInset + 10 }]}>
       <View style={styles.brandRow}>
         <BrandMark />
         <View style={styles.titleBlock}>

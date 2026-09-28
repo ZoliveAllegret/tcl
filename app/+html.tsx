@@ -28,6 +28,8 @@ export default function Root({ children }: { children: ReactNode }) {
           However, body scrolling is often nice to have for mobile web. If you want to enable it, remove this line.
         */}
         <ScrollViewStyleReset />
+        <style dangerouslySetInnerHTML={{ __html: viewportHeight }} />
+        <script dangerouslySetInnerHTML={{ __html: pinViewport }} />
 
         {/* Using raw CSS styles as an escape-hatch to ensure the background color never flickers in dark-mode. */}
         <style dangerouslySetInnerHTML={{ __html: responsiveBackground }} />
@@ -47,6 +49,23 @@ if ('serviceWorker' in navigator) {
     const scriptUrl = new URL('sw.js', scopeUrl);
     navigator.serviceWorker.register(scriptUrl.href, { scope: scopeUrl.href }).catch(() => {});
   });
+}
+`;
+
+const viewportHeight = `
+html, body, #root { height: 100dvh; }
+`;
+
+const pinViewport = `
+if (window.visualViewport) {
+  const pin = () => {
+    if (window.scrollY !== 0) {
+      window.scrollTo(0, 0);
+    }
+  };
+  window.visualViewport.addEventListener('scroll', pin);
+  window.visualViewport.addEventListener('resize', pin);
+  window.addEventListener('scroll', pin);
 }
 `;
 

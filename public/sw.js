@@ -1,4 +1,4 @@
-const CACHE = "tcl-shell-v6";
+const CACHE = "tcl-shell-v7";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());

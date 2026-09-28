@@ -8,7 +8,7 @@ import { Badge, EmptyState, IconButton, LiveDot, SectionLabel, SkeletonRows } fr
 import { fetchPassages } from "@/src/api/grandLyon";
 import { useFavorites } from "@/src/favorites/FavoritesProvider";
 import { formatClock } from "@/src/format";
-import { getLineName, loadDepartures, type ScheduledDeparture } from "@/src/schedule/theoretical";
+import { getLineName, loadNextDepartures, type ScheduledDeparture } from "@/src/schedule/theoretical";
 import { usePlaceName } from "@/src/stops/placeName";
 import { oppositePlatforms } from "@/src/stops/siblings";
 import { useStops } from "@/src/stops/StopsProvider";
@@ -17,15 +17,43 @@ import type { Passage } from "@/src/types";
 
 const REFRESH_MS = 10_000;
 
-function scheduleGroups(schedule: ScheduledDeparture[] | null): [string, ScheduledDeparture[]][] {
-  const groups = new Map<string, ScheduledDeparture[]>();
-  for (const departure of schedule ?? []) {
-    const key = `${departure.line}\0${departure.direction}`;
-    const current = groups.get(key) ?? [];
-    current.push(departure);
-    groups.set(key, current);
+/** Évite de relancer le fichier d'horaires si Safari recharge la page en boucle. */
+function allowScheduleRead(stopId: number): boolean {
+  if (typeof sessionStorage === "undefined") {
+    return true;
   }
-  return [...groups.entries()];
+  try {
+    const key = "tcl-next-departure";
+    const now = Date.now();
+    const previous = JSON.parse(sessionStorage.getItem(key) || "null") as { id: number; at: number; n: number } | null;
+    const n = previous && previous.id === stopId && now - previous.at < 12000 ? previous.n + 1 : 1;
+    sessionStorage.setItem(key, JSON.stringify({ id: stopId, at: now, n }));
+    return n <= 2;
+  } catch {
+    return true;
+  }
+}
+
+function countdownUntil(at: number): string {
+  const minutes = Math.max(0, Math.round((at - Date.now()) / 60_000));
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest}`;
+}
+
+function asTheoretical(stopId: number, item: ScheduledDeparture): Passage {
+  return {
+    stopId,
+    line: item.line,
+    direction: item.direction,
+    delayLabel: countdownUntil(item.at),
+    scheduledAt: new Date(item.at).toISOString(),
+    kind: "theoretical",
+    destinationStopId: null,
+  };
 }
 
 /** « 3 min » devient { value: "3", unit: "min" } pour l'afficher en grand. */
@@ -60,7 +88,7 @@ export default function StopScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [schedule, setSchedule] = useState<ScheduledDeparture[] | null>(null);
-  const [scheduleStatus, setScheduleStatus] = useState("Chargement des horaires…");
+  const [scheduleStatus, setScheduleStatus] = useState("Recherche du prochain départ…");
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const navInset = useNavBarInset();
@@ -71,22 +99,28 @@ export default function StopScreen() {
     setError(null);
     setSchedule(null);
     setScheduleError(null);
-    setScheduleStatus("Chargement des horaires…");
+    setScheduleStatus("Recherche du prochain départ…");
   }, [stopId]);
 
+  const waitingForLive = loading || error !== null || passages.length > 0;
+
   useEffect(() => {
-    if (!Number.isFinite(stopId)) {
+    if (!Number.isFinite(stopId) || waitingForLive || stops.length === 0) {
+      return;
+    }
+    if (!allowScheduleRead(stopId)) {
+      setSchedule([]);
       return;
     }
     let cancelled = false;
-    Promise.all(platformIds.map((platformId) => loadDepartures(platformId, (message) => {
+    loadNextDepartures(platformIds, (message) => {
       if (!cancelled) {
         setScheduleStatus(message);
       }
-    })))
-      .then((groups) => {
+    })
+      .then((departures) => {
         if (!cancelled) {
-          setSchedule(groups.flat().sort((left, right) => left.at - right.at));
+          setSchedule(departures);
         }
       })
       .catch((cause: unknown) => {
@@ -97,7 +131,7 @@ export default function StopScreen() {
     return () => {
       cancelled = true;
     };
-  }, [platformIds, stopId]);
+  }, [platformIds, stopId, stops.length, waitingForLive]);
 
   const load = useCallback(
     async (manual: boolean) => {
@@ -143,8 +177,9 @@ export default function StopScreen() {
     }, [load]),
   );
 
+  const shown = passages.length > 0 ? passages : (schedule ?? []).map((item) => asTheoretical(stopId, item));
   const groups = new Map<string, Passage[]>();
-  for (const passage of passages) {
+  for (const passage of shown) {
     const current = groups.get(passage.line) ?? [];
     current.push(passage);
     groups.set(passage.line, current);
@@ -199,6 +234,8 @@ export default function StopScreen() {
                 <LiveDot size={7} />
                 <Text style={styles.liveTagLabel}>{liveCount > 0 ? "En direct" : "Prévisions"}</Text>
               </View>
+            ) : shown.length > 0 ? (
+              <Text style={styles.hint}>Théorique · 2 sens</Text>
             ) : null
           }
         >
@@ -209,11 +246,20 @@ export default function StopScreen() {
         {error ? (
           <EmptyState tone="danger" icon="offline" title="Passages indisponibles" message={error} />
         ) : null}
-        {!loading && !error && passages.length === 0 ? (
+        {!loading && !error && passages.length === 0 && schedule === null && !scheduleError ? (
+          <View style={styles.pending}>
+            <Text style={styles.hint}>{scheduleStatus}</Text>
+            <SkeletonRows count={1} />
+          </View>
+        ) : null}
+        {scheduleError && passages.length === 0 ? (
+          <EmptyState tone="danger" icon="offline" title="Horaires indisponibles" message={scheduleError} />
+        ) : null}
+        {!loading && !error && passages.length === 0 && schedule && schedule.length === 0 ? (
           <EmptyState
             icon="clock"
             title="Aucun passage annoncé"
-            message="Pas de départ en temps réel pour le moment. Consultez les horaires théoriques ci-dessous."
+            message="Pas de départ en temps réel, ni de prochain horaire théorique."
           />
         ) : null}
 
@@ -274,43 +320,6 @@ export default function StopScreen() {
           </View>
         ))}
 
-        <SectionLabel trailing={<Text style={styles.hint}>2 sens · 20 h</Text>}>Horaires théoriques</SectionLabel>
-        {schedule === null && !scheduleError ? (
-          <View style={styles.pending}>
-            <Text style={styles.hint}>{scheduleStatus}</Text>
-            <SkeletonRows count={1} />
-          </View>
-        ) : null}
-        {scheduleError ? (
-          <EmptyState tone="danger" icon="offline" title="Horaires indisponibles" message={scheduleError} />
-        ) : null}
-        {schedule && schedule.length === 0 ? (
-          <EmptyState icon="clock" title="Aucun horaire prévu" message="Rien sur les 20 prochaines heures." />
-        ) : null}
-        {scheduleGroups(schedule).map(([key, items]) => (
-          <View key={key} style={[styles.card, t.elevation]}>
-            <View style={styles.cardHead}>
-              <LineChip line={items[0].line} />
-              <View style={styles.lineCopy}>
-                <Text style={styles.cardTitle} numberOfLines={1}>
-                  vers {items[0].direction}
-                </Text>
-                {getLineName(items[0].line) ? (
-                  <Text style={styles.cardSubtitle} numberOfLines={1}>
-                    {getLineName(items[0].line)}
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-            <View style={styles.times}>
-              {items.map((item, index) => (
-                <Text key={`${key}-${item.at}`} style={[styles.time, index === 0 && styles.timeNext]}>
-                  {item.time}
-                </Text>
-              ))}
-            </View>
-          </View>
-        ))}
       </ScrollView>
       <NavBar />
     </View>
@@ -379,14 +388,6 @@ const useStyles = makeStyles((t) => ({
     color: t.colors.ink,
     flexShrink: 1,
   },
-  cardSubtitle: {
-    ...t.type.caption,
-    color: t.colors.muted,
-  },
-  lineCopy: {
-    flex: 1,
-    gap: 1,
-  },
   departure: {
     flexDirection: "row",
     alignItems: "center",
@@ -448,23 +449,5 @@ const useStyles = makeStyles((t) => ({
   hint: {
     ...t.type.caption,
     color: t.colors.muted,
-  },
-  times: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  time: {
-    ...t.type.time,
-    color: t.colors.ink,
-    backgroundColor: t.colors.surfaceMuted,
-    borderRadius: t.radius.sm,
-    overflow: "hidden",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  timeNext: {
-    backgroundColor: t.colors.accent,
-    color: t.colors.accentInk,
   },
 }));

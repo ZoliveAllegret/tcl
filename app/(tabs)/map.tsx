@@ -1,11 +1,10 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { LineChip } from "@/components/LineChip";
 import { useNavBarInset } from "@/components/NavBar";
-import { Badge, IconButton, LiveDot, SearchField } from "@/components/ui";
+import { Badge, IconButton, LiveDot, SearchField, useTopInset } from "@/components/ui";
 import { NetworkMap, type NetworkMapHandle } from "@/components/NetworkMap";
 import { LYON_CENTER } from "@/src/config";
 import { formatClock } from "@/src/format";
@@ -22,7 +21,7 @@ import type { MapRegion } from "@/src/types";
 export default function MapScreen() {
   const styles = useStyles();
   const t = useTheme();
-  const insets = useSafeAreaInsets();
+  const topInset = useTopInset();
   const mapRef = useRef<NetworkMapHandle>(null);
   const navInset = useNavBarInset();
   const { stops, getStop } = useStops();
@@ -158,7 +157,7 @@ export default function MapScreen() {
           mode: vehicleMode(vehicle.line),
         }))}
       />
-      <View style={[styles.topBar, { top: insets.top + 10 }]} pointerEvents="box-none">
+      <View style={[styles.topBar, { top: topInset + 10 }]} pointerEvents="box-none">
         <SearchField
           floating
           value={lineQuery}
@@ -183,7 +182,7 @@ export default function MapScreen() {
         />
       </View>
       {suggestions.length > 0 || shownLines.length > 0 ? (
-        <View style={[styles.chooser, { top: insets.top + 72 }]} pointerEvents="box-none">
+        <View style={[styles.chooser, { top: topInset + 72 }]} pointerEvents="box-none">
           {suggestions.length > 0 ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.choiceRow}>
               {suggestions.map((line) => (

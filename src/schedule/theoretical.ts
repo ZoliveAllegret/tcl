@@ -8,7 +8,6 @@ export type ScheduledDeparture = {
 };
 
 const HORIZON_MS = 20 * 60 * 60 * 1000;
-const MAX_PER_DIRECTION = 8;
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 type ActiveTrip = {
@@ -24,7 +23,8 @@ type DirectionGroup = {
 };
 
 let cachedDay = "";
-let cachedIndex: Promise<Map<number, ScheduledDeparture[]>> | null = null;
+let cachedNext = new Map<number, ScheduledDeparture[]>();
+let nextScan: Promise<void> | null = null;
 let gtfsEntries: Promise<Map<string, Uint8Array>> | null = null;
 let lineNames = new Map<string, string>();
 
@@ -135,11 +135,11 @@ async function forEachDataLine(data: Uint8Array, onLine: (line: string) => void)
   }
 }
 
-function rememberTime(group: DirectionGroup, at: number) {
+function rememberTime(group: DirectionGroup, at: number, maxPerDirection: number) {
   if (group.times.includes(at)) {
     return;
   }
-  if (group.times.length < MAX_PER_DIRECTION) {
+  if (group.times.length < maxPerDirection) {
     group.times.push(at);
     return;
   }
@@ -213,8 +213,12 @@ export async function loadLineNames(): Promise<void> {
   }
 }
 
-async function buildIndex(onProgress?: (message: string) => void): Promise<Map<number, ScheduledDeparture[]>> {
-  onProgress?.("Téléchargement des horaires…");
+async function buildIndex(
+  wanted: Set<number> | null,
+  maxPerDirection: number,
+  onProgress?: (message: string) => void,
+): Promise<Map<number, ScheduledDeparture[]>> {
+  onProgress?.("Recherche du prochain départ…");
   const entries = await loadGtfsEntries();
   const required = ["calendar.txt", "calendar_dates.txt", "routes.txt", "trips.txt", "stop_times.txt"];
   for (const name of required) {
@@ -289,25 +293,26 @@ async function buildIndex(onProgress?: (message: string) => void): Promise<Map<n
   lineNames = nextLineNames;
 
   const trips = new Map<string, ActiveTrip>();
-  const tripLines = (await inflateText(entries.get("trips.txt")!)).split("\n");
-  const tripHeader = tripLines[0]?.replace(/^\uFEFF/, "").split(",") ?? [];
-  const tripIndex = Object.fromEntries(tripHeader.map((name, index) => [name.trim(), index]));
-  for (const rawLine of tripLines.slice(1)) {
-    const line = rawLine.replace(/\r$/, "");
-    if (!line) {
-      continue;
+  let tripHeader = true;
+  let tripIndex: Record<string, number> = {};
+  await forEachDataLine(entries.get("trips.txt")!, (rawLine) => {
+    const line = rawLine.replace(/^\uFEFF/, "");
+    if (tripHeader) {
+      tripHeader = false;
+      tripIndex = Object.fromEntries(line.split(",").map((name, index) => [name.trim(), index]));
+      return;
     }
     const fields = line.split(",");
     const activeDays = services.get(fields[tripIndex.service_id]);
     if (!activeDays || activeDays.size === 0) {
-      continue;
+      return;
     }
     trips.set(fields[tripIndex.trip_id], {
       line: routeNames.get(fields[tripIndex.route_id]) ?? "?",
       direction: fields[tripIndex.trip_headsign] || "Direction inconnue",
       days: [...activeDays],
     });
-  }
+  });
 
   onProgress?.("Lecture des heures de passage…");
   const groups = new Map<number, Map<string, DirectionGroup>>();
@@ -324,7 +329,7 @@ async function buildIndex(onProgress?: (message: string) => void): Promise<Map<n
       return;
     }
     const stopId = Number(fields[3]);
-    if (!Number.isFinite(stopId)) {
+    if (!Number.isFinite(stopId) || (wanted && !wanted.has(stopId))) {
       return;
     }
     for (const serviceDay of trip.days) {
@@ -335,7 +340,7 @@ async function buildIndex(onProgress?: (message: string) => void): Promise<Map<n
       const stopGroups = groups.get(stopId) ?? new Map<string, DirectionGroup>();
       const key = `${trip.line}\0${trip.direction}`;
       const group = stopGroups.get(key) ?? { line: trip.line, direction: trip.direction, times: [] };
-      rememberTime(group, at);
+      rememberTime(group, at, maxPerDirection);
       stopGroups.set(key, group);
       groups.set(stopId, stopGroups);
     }
@@ -515,14 +520,41 @@ function clockMinutes(value: string | undefined): number | null {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
-export function loadDepartures(stopId: number, onProgress?: (message: string) => void): Promise<ScheduledDeparture[]> {
+/** Prochain passage théorique par ligne et par sens, uniquement pour les arrêts demandés. */
+export function loadNextDepartures(
+  stopIds: number[],
+  onProgress?: (message: string) => void,
+): Promise<ScheduledDeparture[]> {
   const today = dayKey(new Date());
-  if (!cachedIndex || cachedDay !== today) {
+  if (cachedDay !== today) {
     cachedDay = today;
-    cachedIndex = buildIndex(onProgress).catch((error: unknown) => {
-      cachedIndex = null;
+    cachedNext = new Map();
+    nextScan = null;
+  }
+  const missing = [...new Set(stopIds)].filter((id) => !cachedNext.has(id));
+  if (missing.length === 0) {
+    return Promise.resolve(collectNext(stopIds));
+  }
+  const scan = (nextScan ?? Promise.resolve()).then(async () => {
+    const still = missing.filter((id) => !cachedNext.has(id));
+    if (still.length === 0) {
+      return;
+    }
+    const found = await buildIndex(new Set(still), 1, onProgress);
+    for (const id of still) {
+      cachedNext.set(id, found.get(id) ?? []);
+    }
+  });
+  nextScan = scan
+    .catch((error: unknown) => {
+      nextScan = null;
       throw error;
     });
-  }
-  return cachedIndex.then((index) => index.get(stopId) ?? []);
+  return nextScan.then(() => collectNext(stopIds));
+}
+
+function collectNext(stopIds: number[]): ScheduledDeparture[] {
+  return stopIds
+    .flatMap((id) => cachedNext.get(id) ?? [])
+    .sort((left, right) => left.at - right.at);
 }
