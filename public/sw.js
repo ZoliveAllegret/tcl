@@ -1,4 +1,4 @@
-const CACHE = "tcl-shell-v4";
+const CACHE = "tcl-shell-v5";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -40,12 +40,28 @@ async function networkFirst(request) {
     const response = await fetch(request);
     if (response.ok) {
       await cache.put(request, response.clone());
+      return response;
     }
-    return response;
+    // /stop/123 ou /line/B n'existent pas comme fichiers : on sert l'application.
+    const shell = await appShell(cache);
+    return shell || response;
   } catch {
-    const home = new Request(new URL("./", self.registration.scope));
-    return (await cache.match(request)) || (await cache.match(home)) || Response.error();
+    return (await cache.match(request)) || (await appShell(cache)) || Response.error();
   }
+}
+
+async function appShell(cache) {
+  const home = new Request(new URL("./index.html", self.registration.scope));
+  const cached = await cache.match(home);
+  if (cached) {
+    return cached;
+  }
+  const response = await fetch(home);
+  if (!response.ok) {
+    return null;
+  }
+  await cache.put(home, response.clone());
+  return response;
 }
 
 async function staleWhileRevalidate(request) {
