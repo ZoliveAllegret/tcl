@@ -74,7 +74,8 @@ const server = createServer((request, response) => {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("Introuvable");
     return;
   }
-  response.writeHead(200, headers(filePath));
+  const size = statSync(filePath).size;
+  response.writeHead(200, { ...headers(filePath), "Content-Length": size });
   if (request.method === "HEAD") {
     response.end();
     return;

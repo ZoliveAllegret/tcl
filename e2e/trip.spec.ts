@@ -4,6 +4,8 @@ import { fixtureGtfs, fixturePassages, fixtureStops } from "./gtfs";
 
 async function mockNetwork(page: Page) {
   const now = Date.now();
+  await page.route("**/data/**", (route) => route.fulfill({ status: 404, body: "" }));
+  await page.route("**/ride-graph.json", (route) => route.fulfill({ status: 404, body: "" }));
   await page.route("**/*grandlyon.com/**", async (route: Route) => {
     const url = route.request().url();
     if (url.includes("GTFS") || url.endsWith(".ZIP")) {

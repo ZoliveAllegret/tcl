@@ -2,7 +2,9 @@ import { Platform } from "react-native";
 
 import { grandLyonConfig } from "@/src/config";
 import { forEachDataLine, inflateText, readZipEntries } from "@/src/schedule/gtfsZip";
+import { loadPreparedTimetable, warmPreparedData } from "@/src/schedule/prepared";
 import { collectRideLinks, unpackRideGraph, type PackedRideGraph, type RideLink } from "@/src/schedule/rideGraph";
+import { departuresFromTimetable } from "@/src/schedule/timetable";
 
 export type { RideLink };
 
@@ -170,13 +172,13 @@ async function loadGtfsEntries(): Promise<Map<string, Uint8Array>> {
   return gtfsEntries;
 }
 
-/** Lance le téléchargement des horaires dès l'ouverture, sans bloquer l'écran. */
+/** Au lancement : manifeste des fichiers préparés, puis le graphe. Le zip n'est plus téléchargé. */
 export function warmTheoreticalSchedule(): void {
   if (typeof window === "undefined") {
     return;
   }
   const start = () => {
-    void loadGtfsEntries().catch(() => undefined);
+    warmPreparedData();
     void loadRideGraph().catch(() => undefined);
   };
   const idle = window as Window & { requestIdleCallback?: (callback: () => void) => void };
@@ -190,6 +192,15 @@ export function warmTheoreticalSchedule(): void {
 export async function loadLineNames(): Promise<void> {
   if (lineNames.size > 0) {
     return;
+  }
+  try {
+    const table = await loadPreparedTimetable();
+    if (lineNames.size === 0) {
+      lineNames = new Map(table.lines.map((code, index) => [code, table.names[index] || code]));
+    }
+    return;
+  } catch {
+    // Sans fichier préparé, les noms viennent encore du zip.
   }
   const entries = await loadGtfsEntries();
   const routes = entries.get("routes.txt");
@@ -431,6 +442,19 @@ async function buildRideGraph(): Promise<Map<number, RideLink[]>> {
 
 /** Horaires des 20 prochaines heures, uniquement pour les arrêts demandés. */
 export function loadDepartures(
+  stopIds: number[],
+  onProgress?: (message: string) => void,
+  onFraction?: (ratio: number) => void,
+): Promise<ScheduledDeparture[]> {
+  return loadPreparedTimetable()
+    .then((table) => {
+      onFraction?.(1);
+      return departuresFromTimetable(table, stopIds, new Date(), HORIZON_MS, MAX_PER_DIRECTION);
+    })
+    .catch(() => scanDepartures(stopIds, onProgress, onFraction));
+}
+
+function scanDepartures(
   stopIds: number[],
   onProgress?: (message: string) => void,
   onFraction?: (ratio: number) => void,

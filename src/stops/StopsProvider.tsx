@@ -1,16 +1,8 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { fetchAllStops } from "@/src/api/grandLyon";
+import { loadPreparedStops } from "@/src/schedule/prepared";
 import type { Stop } from "@/src/types";
-
-const CACHE_KEY = "tcl.stops.v1";
-const MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-type CachePayload = {
-  savedAt: number;
-  stops: Stop[];
-};
 
 type StopsContextValue = {
   stops: Stop[];
@@ -24,18 +16,6 @@ type StopsContextValue = {
 
 const StopsContext = createContext<StopsContextValue | null>(null);
 
-async function readCache(): Promise<Stop[] | null> {
-  const raw = await AsyncStorage.getItem(CACHE_KEY);
-  if (!raw) {
-    return null;
-  }
-  const payload = JSON.parse(raw) as CachePayload;
-  if (!payload.savedAt || Date.now() - payload.savedAt > MAX_AGE_MS || !Array.isArray(payload.stops)) {
-    return null;
-  }
-  return payload.stops;
-}
-
 export function StopsProvider({ children }: { children: ReactNode }) {
   const [stops, setStops] = useState<Stop[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,16 +24,24 @@ export function StopsProvider({ children }: { children: ReactNode }) {
   const [totalCount, setTotalCount] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
-      const next = await fetchAllStops((loaded, total) => {
-        setLoadedCount(loaded);
-        setTotalCount(total);
-      });
-      setStops(next);
-      const payload: CachePayload = { savedAt: Date.now(), stops: next };
-      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+      try {
+        const next = await loadPreparedStops(
+          (loaded, total) => {
+            setLoadedCount(loaded);
+            setTotalCount(total);
+          },
+          (updated) => setStops(updated),
+        );
+        setStops(next);
+      } catch {
+        const next = await fetchAllStops((loaded, total) => {
+          setLoadedCount(loaded);
+          setTotalCount(total);
+        });
+        setStops(next);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Impossible de charger les arrêts.");
     } finally {
@@ -63,24 +51,11 @@ export function StopsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const cached = await readCache();
-        if (cancelled) {
-          return;
-        }
-        if (cached && cached.length > 0) {
-          setStops(cached);
-          setLoading(false);
-          return;
-        }
-      } catch {
-        // Le cache illisible est ignoré, on recharge le réseau.
-      }
+    void refresh().finally(() => {
       if (!cancelled) {
-        await refresh();
+        setLoading(false);
       }
-    })();
+    });
     return () => {
       cancelled = true;
     };
