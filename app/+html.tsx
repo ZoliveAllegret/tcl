@@ -10,6 +10,7 @@ export default function Root({ children }: { children: ReactNode }) {
     <html lang="fr">
       <head>
         <meta charSet="utf-8" />
+        <base href={siteBase} />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
         <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F3F6" />
@@ -36,6 +37,8 @@ export default function Root({ children }: { children: ReactNode }) {
     </html>
   );
 }
+
+const siteBase = `${process.env.EXPO_BASE_URL || "/"}`.replace(/\/?$/, "/");
 
 const serviceWorker = `
 if ('serviceWorker' in navigator) {
