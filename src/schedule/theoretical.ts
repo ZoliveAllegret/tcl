@@ -8,6 +8,7 @@ export type ScheduledDeparture = {
 };
 
 const HORIZON_MS = 20 * 60 * 60 * 1000;
+const MAX_PER_DIRECTION = 8;
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 type ActiveTrip = {
@@ -218,7 +219,7 @@ async function buildIndex(
   maxPerDirection: number,
   onProgress?: (message: string) => void,
 ): Promise<Map<number, ScheduledDeparture[]>> {
-  onProgress?.("Recherche du prochain départ…");
+  onProgress?.("Téléchargement des horaires…");
   const entries = await loadGtfsEntries();
   const required = ["calendar.txt", "calendar_dates.txt", "routes.txt", "trips.txt", "stop_times.txt"];
   for (const name of required) {
@@ -520,8 +521,8 @@ function clockMinutes(value: string | undefined): number | null {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
-/** Prochain passage théorique par ligne et par sens, uniquement pour les arrêts demandés. */
-export function loadNextDepartures(
+/** Horaires des 20 prochaines heures, uniquement pour les arrêts demandés. */
+export function loadDepartures(
   stopIds: number[],
   onProgress?: (message: string) => void,
 ): Promise<ScheduledDeparture[]> {
@@ -540,7 +541,7 @@ export function loadNextDepartures(
     if (still.length === 0) {
       return;
     }
-    const found = await buildIndex(new Set(still), 1, onProgress);
+    const found = await buildIndex(new Set(still), MAX_PER_DIRECTION, onProgress);
     for (const id of still) {
       cachedNext.set(id, found.get(id) ?? []);
     }
