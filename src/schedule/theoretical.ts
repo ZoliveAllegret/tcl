@@ -106,28 +106,85 @@ function parseLineNames(routesText: string): Map<string, string> {
   return names;
 }
 
+const GTFS_CACHE = "tcl-gtfs-v1";
+const GTFS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+async function readCachedGtfs(): Promise<ArrayBuffer | null> {
+  if (typeof caches === "undefined") {
+    return null;
+  }
+  const cache = await caches.open(GTFS_CACHE);
+  const hit = await cache.match(grandLyonConfig.gtfsUrl);
+  if (!hit) {
+    return null;
+  }
+  const savedAt = Number(hit.headers.get("x-tcl-saved-at") || 0);
+  if (!savedAt || Date.now() - savedAt > GTFS_MAX_AGE_MS) {
+    await cache.delete(grandLyonConfig.gtfsUrl);
+    return null;
+  }
+  return hit.arrayBuffer();
+}
+
+async function rememberGtfs(buffer: ArrayBuffer): Promise<void> {
+  if (typeof caches === "undefined") {
+    return;
+  }
+  try {
+    const cache = await caches.open(GTFS_CACHE);
+    await cache.put(
+      grandLyonConfig.gtfsUrl,
+      new Response(buffer.slice(0), {
+        headers: { "x-tcl-saved-at": String(Date.now()) },
+      }),
+    );
+  } catch {
+    // Le téléphone peut refuser un fichier de cette taille. Le trajet continue sans cache.
+  }
+}
+
 async function loadGtfsEntries(): Promise<Map<string, Uint8Array>> {
   if (typeof DecompressionStream === "undefined") {
     throw new Error("Cet appareil ne peut pas ouvrir le fichier d'horaires TCL.");
   }
   if (!gtfsEntries) {
-    gtfsEntries = fetch(grandLyonConfig.gtfsUrl, {
-      headers: {
-        Authorization: authorizationHeader(),
-      },
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Les horaires théoriques ont répondu ${response.status}.`);
-        }
-        return readZipEntries(await response.arrayBuffer());
-      })
-      .catch((error: unknown) => {
-        gtfsEntries = null;
-        throw error;
+    gtfsEntries = (async () => {
+      const cached = await readCachedGtfs();
+      if (cached) {
+        return readZipEntries(cached);
+      }
+      const response = await fetch(grandLyonConfig.gtfsUrl, {
+        headers: { Authorization: authorizationHeader() },
       });
+      if (!response.ok) {
+        throw new Error(`Les horaires théoriques ont répondu ${response.status}.`);
+      }
+      const buffer = await response.arrayBuffer();
+      await rememberGtfs(buffer);
+      return readZipEntries(buffer);
+    })().catch((error: unknown) => {
+      gtfsEntries = null;
+      throw error;
+    });
   }
   return gtfsEntries;
+}
+
+/** Lance le téléchargement des horaires dès l'ouverture, sans bloquer l'écran. */
+export function warmTheoreticalSchedule(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const start = () => {
+    void loadGtfsEntries().catch(() => undefined);
+    void loadRideGraph().catch(() => undefined);
+  };
+  const idle = window as Window & { requestIdleCallback?: (callback: () => void) => void };
+  if (idle.requestIdleCallback) {
+    idle.requestIdleCallback(start);
+  } else {
+    setTimeout(start, 1200);
+  }
 }
 
 export async function loadLineNames(): Promise<void> {

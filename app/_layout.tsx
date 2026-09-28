@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 
 import { FavoritesProvider } from "@/src/favorites/FavoritesProvider";
+import { warmTheoreticalSchedule } from "@/src/schedule/theoretical";
 import { StopsProvider } from "@/src/stops/StopsProvider";
 import { ThemeProvider, useTheme } from "@/src/theme";
 
@@ -14,6 +15,7 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   useEffect(() => {
     void SplashScreen.hideAsync();
+    warmTheoreticalSchedule();
   }, []);
 
   return (
