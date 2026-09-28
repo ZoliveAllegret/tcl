@@ -7,7 +7,7 @@ import { Icon } from "@/components/Icon";
 import { EmptyState, ProgressMeter, ScreenHeader, SearchField, SkeletonRows } from "@/components/ui";
 import { formatClock, normalizeText } from "@/src/format";
 import { distanceMeters } from "@/src/geo";
-import { planTrips, type Trip, type TripProgress } from "@/src/schedule/planner";
+import { planTrips, type Trip, type TripLeg, type TripProgress } from "@/src/schedule/planner";
 import { useStops } from "@/src/stops/StopsProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 import type { Stop } from "@/src/types";
@@ -253,7 +253,9 @@ export default function TripScreen() {
                     vers {leg.direction} · {formatClock(leg.departureAt)} – {formatClock(leg.arrivalAt)}
                   </Text>
                 </View>
-                {index < trip.legs.length - 1 ? <Text style={styles.transfer}>5 min</Text> : null}
+                {index < trip.legs.length - 1 ? (
+                  <Text style={styles.transfer}>{waitLabel(trip.legs[index], trip.legs[index + 1])}</Text>
+                ) : null}
               </View>
             ))}
           </View>
@@ -261,6 +263,14 @@ export default function TripScreen() {
       </View>
     </ScrollView>
   );
+}
+
+function waitLabel(current: TripLeg, next: TripLeg): string {
+  const minutes = Math.round((Date.parse(next.departureAt) - Date.parse(current.arrivalAt)) / 60_000);
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return "correspondance";
+  }
+  return `${minutes} min`;
 }
 
 function tripKey(trip: Trip): string {

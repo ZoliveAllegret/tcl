@@ -1,7 +1,7 @@
 import { fetchPassages } from "@/src/api/grandLyon";
 import { normalizeText } from "@/src/format";
 import { distanceMeters } from "@/src/geo";
-import { isRideGraphReady, loadRideGraph, type RideLink } from "@/src/schedule/theoretical";
+import { isRideGraphReady, loadDepartures, loadRideGraph, type RideLink } from "@/src/schedule/theoretical";
 import type { Stop } from "@/src/types";
 
 export type TripLeg = {
@@ -76,30 +76,39 @@ export async function planTrips(
     return [];
   }
 
+  const report = (label: string, percent: number) => {
+    onProgress?.({ label, percent: Math.max(0, Math.min(99, Math.round(percent))) });
+  };
   const cached = isRideGraphReady();
   if (!cached) {
-    onProgress?.({ label: "Téléchargement du réseau", percent: 0 });
+    report("Téléchargement du réseau", 0);
   }
   const [rides, places] = await Promise.all([
     loadRideGraph((percent) => {
       if (!cached) {
-        onProgress?.({ label: "Téléchargement du réseau", percent });
+        report("Téléchargement du réseau", percent * 0.15);
       }
     }),
     Promise.resolve(placeIndex(stops)),
   ]);
-  onProgress?.({ label: "Calcul du trajet", percent: 0 });
-  const walks = walkLinks(stops);
+  report("Préparation des correspondances", 15);
+  const walks = await walkLinks(stops, (ratio) => {
+    report("Préparation des correspondances", 15 + ratio * 25);
+  });
   const fromIds = new Set(places.get(fromStopId) ?? [fromStopId]);
   const toIds = new Set(places.get(toStopId) ?? [toStopId]);
-  const drafts = await findPaths(rides, walks, fromIds, toIds, (percent) => {
-    onProgress?.({ label: "Calcul du trajet", percent });
+  const drafts = await findPaths(rides, walks, fromIds, toIds, (ratio) => {
+    report("Calcul du trajet", 40 + ratio * 30);
   });
   const passages = new Map<number, Awaited<ReturnType<typeof fetchPassages>> | null>();
   const trips: Trip[] = [];
-  for (const draft of drafts) {
-    trips.push(await scheduleDraft(draft, at.getTime(), places, passages));
+  for (let index = 0; index < drafts.length; index += 1) {
+    report("Horaires de passage", 70 + (index / Math.max(drafts.length, 1)) * 29);
+    trips.push(await scheduleDraft(drafts[index], at.getTime(), places, passages, (ratio) => {
+      report("Horaires de passage", 70 + ((index + ratio) / Math.max(drafts.length, 1)) * 29);
+    }));
   }
+  onProgress?.({ label: "Horaires de passage", percent: 100 });
   return trips.sort(
     (left, right) => left.arrivalAt.localeCompare(right.arrivalAt) || left.legs.length - right.legs.length || left.departureAt.localeCompare(right.departureAt),
   );
@@ -110,7 +119,7 @@ async function findPaths(
   walks: Map<number, WalkLink[]>,
   fromIds: Set<number>,
   toIds: Set<number>,
-  onProgress?: (percent: number) => void,
+  onProgress?: (ratio: number) => void,
 ): Promise<Ride[][]> {
   const heap = new Heap<SearchNode>((left, right) => left.time < right.time || (left.time === right.time && left.transfers < right.transfers));
   const best = new Map<string, number>();
@@ -142,7 +151,7 @@ async function findPaths(
     }
     visits += 1;
     if (visits % 2500 === 0) {
-      onProgress?.(Math.min(99, Math.round((visits / MAX_VISITS) * 100)));
+      onProgress?.(Math.min(0.99, visits / MAX_VISITS));
       await new Promise((resolve) => {
         setTimeout(resolve, 0);
       });
@@ -208,7 +217,7 @@ async function findPaths(
     }
   }
 
-  onProgress?.(100);
+  onProgress?.(1);
   return found
     .sort((left, right) => left.time - right.time || left.rides.length - right.rides.length)
     .slice(0, MAX_RESULTS)
@@ -269,7 +278,13 @@ function ridesOf(node: SearchNode): Ride[] {
   return rides;
 }
 
-function walkLinks(stops: Stop[]): Map<number, WalkLink[]> {
+let cachedWalks: { stops: Stop[]; links: Map<number, WalkLink[]> } | null = null;
+
+async function walkLinks(stops: Stop[], onProgress?: (ratio: number) => void): Promise<Map<number, WalkLink[]>> {
+  if (cachedWalks?.stops === stops) {
+    onProgress?.(1);
+    return cachedWalks.links;
+  }
   const cell = 0.004;
   const grid = new Map<string, Stop[]>();
   for (const stop of stops) {
@@ -289,7 +304,8 @@ function walkLinks(stops: Stop[]): Map<number, WalkLink[]> {
       links.set(from, list);
     }
   };
-  for (const stop of stops) {
+  for (let index = 0; index < stops.length; index += 1) {
+    const stop = stops[index];
     const latitude = Math.floor(stop.latitude / cell);
     const longitude = Math.floor(stop.longitude / cell);
     for (let row = latitude - 1; row <= latitude + 1; row += 1) {
@@ -306,7 +322,15 @@ function walkLinks(stops: Stop[]): Map<number, WalkLink[]> {
         }
       }
     }
+    if (index % 400 === 0) {
+      onProgress?.(index / stops.length);
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    }
   }
+  cachedWalks = { stops, links };
+  onProgress?.(1);
   return links;
 }
 
@@ -364,14 +388,16 @@ async function scheduleDraft(
   startAt: number,
   places: Map<number, number[]>,
   passages: Map<number, Awaited<ReturnType<typeof fetchPassages>> | null>,
+  onFraction?: (ratio: number) => void,
 ): Promise<Trip> {
   let cursor = startAt;
   let provisional = false;
   const legs: TripLeg[] = [];
   for (let index = 0; index < rides.length; index += 1) {
     const ride = rides[index];
-    const departure = await nextDeparture(ride, cursor, places, passages);
-    const departureAt = departure ?? cursor;
+    const readyAt = index === 0 ? cursor : cursor + TRANSFER_MINUTES * 60_000;
+    const departure = await nextDeparture(ride, readyAt, places, passages, onFraction);
+    const departureAt = departure ?? readyAt;
     if (departure == null) {
       provisional = true;
     }
@@ -384,7 +410,7 @@ async function scheduleDraft(
       departureAt: new Date(departureAt).toISOString(),
       arrivalAt: new Date(arrivalAt).toISOString(),
     });
-    cursor = arrivalAt + (index < rides.length - 1 ? TRANSFER_MINUTES * 60_000 : 0);
+    cursor = arrivalAt;
   }
   return {
     departureAt: legs[0]?.departureAt ?? new Date(startAt).toISOString(),
@@ -399,29 +425,44 @@ async function nextDeparture(
   after: number,
   places: Map<number, number[]>,
   cache: Map<number, Awaited<ReturnType<typeof fetchPassages>> | null>,
+  onFraction?: (ratio: number) => void,
 ): Promise<number | null> {
   const candidates = places.get(ride.fromStopId) ?? [ride.fromStopId];
   const ordered = [ride.fromStopId, ...candidates.filter((id) => id !== ride.fromStopId)];
   for (const stopId of ordered) {
-    let best: number | null = null;
     const rows = await passagesAt(stopId, cache);
-    for (const passage of rows) {
-      if (passage.line !== ride.line || !sameDirection(passage.direction, ride.direction)) {
-        continue;
-      }
-      const at = parseWhen(passage.scheduledAt, after);
-      if (at == null || at < after - 60_000) {
-        continue;
-      }
-      if (best == null || at < best) {
-        best = at;
-      }
-    }
-    if (best != null) {
-      return best;
+    const live = pickTime(
+      rows.map((passage) => ({
+        line: passage.line,
+        direction: passage.direction,
+        at: parseWhen(passage.scheduledAt, after),
+      })),
+      ride,
+      after,
+    );
+    if (live != null) {
+      return live;
     }
   }
-  return null;
+  const scheduled = await loadDepartures(ordered, undefined, onFraction);
+  return pickTime(scheduled, ride, after);
+}
+
+function pickTime(
+  rows: { line: string; direction: string; at: number | null }[],
+  ride: Ride,
+  after: number,
+): number | null {
+  let best: number | null = null;
+  for (const row of rows) {
+    if (row.at == null || row.line !== ride.line || !sameDirection(row.direction, ride.direction) || row.at < after - 60_000) {
+      continue;
+    }
+    if (best == null || row.at < best) {
+      best = row.at;
+    }
+  }
+  return best;
 }
 
 async function passagesAt(

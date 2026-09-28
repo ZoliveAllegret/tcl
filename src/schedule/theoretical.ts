@@ -145,10 +145,13 @@ export async function loadLineNames(): Promise<void> {
   }
 }
 
+const STOP_TIME_LINES = 3_200_000;
+
 async function buildIndex(
   wanted: Set<number> | null,
   maxPerDirection: number,
   onProgress?: (message: string) => void,
+  onFraction?: (ratio: number) => void,
 ): Promise<Map<number, ScheduledDeparture[]>> {
   onProgress?.("Téléchargement des horaires…");
   const entries = await loadGtfsEntries();
@@ -251,6 +254,9 @@ async function buildIndex(
   let seen = 0;
   await forEachDataLine(entries.get("stop_times.txt")!, (line) => {
     seen += 1;
+    if (seen % 80_000 === 0) {
+      onFraction?.(Math.min(0.99, seen / STOP_TIME_LINES));
+    }
     const clean = line.replace(/^\uFEFF/, "");
     if (seen === 1 && clean.startsWith("trip_id")) {
       return;
@@ -370,6 +376,7 @@ async function buildRideGraph(): Promise<Map<number, RideLink[]>> {
 export function loadDepartures(
   stopIds: number[],
   onProgress?: (message: string) => void,
+  onFraction?: (ratio: number) => void,
 ): Promise<ScheduledDeparture[]> {
   const today = dayKey(new Date());
   if (cachedDay !== today) {
@@ -386,7 +393,7 @@ export function loadDepartures(
     if (still.length === 0) {
       return;
     }
-    const found = await buildIndex(new Set(still), MAX_PER_DIRECTION, onProgress);
+    const found = await buildIndex(new Set(still), MAX_PER_DIRECTION, onProgress, onFraction);
     for (const id of still) {
       cachedNext.set(id, found.get(id) ?? []);
     }
