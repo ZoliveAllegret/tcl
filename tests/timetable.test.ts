@@ -1,4 +1,4 @@
-import { decodeTimetable, departuresFromTimetable, encodeTimetable, type PreparedTimetable } from "../src/schedule/timetable";
+import { decodeTimetable, departuresFromTimetable, encodeTimetable, lineDayBoard, type PreparedTimetable } from "../src/schedule/timetable";
 
 function table(partial: Partial<PreparedTimetable> = {}): PreparedTimetable {
   return {
@@ -58,6 +58,31 @@ describe("horaires préparés", () => {
       services: [{ days: 0, start: 0, end: 0, add: [20260930], remove: [] }],
     });
     expect(departuresFromTimetable(added, [10], wednesday)).toHaveLength(2);
+  });
+
+  it("donne toutes les heures du jour d'une ligne, dans chaque sens", () => {
+    const clock = (hour: number, minute: number) =>
+      new Date(2026, 8, 30, hour, minute).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    const source = table({
+      lines: ["69", "C3"],
+      names: ["Manufacture", "Campus"],
+      directions: ["Montluc", "Part-Dieu"],
+      byStop: new Map([
+        [
+          10,
+          [
+            { line: 0, direction: 0, service: 0, minutes: [8 * 60, 22 * 60, 30 * 60] },
+            { line: 1, direction: 1, service: 0, minutes: [10 * 60] },
+          ],
+        ],
+        [11, [{ line: 0, direction: 1, service: 0, minutes: [8 * 60 + 15] }]],
+      ]),
+    });
+
+    expect(lineDayBoard(source, [10, 11], "69", wednesday)).toEqual([
+      { direction: "Montluc", times: [clock(8, 0), clock(22, 0)] },
+      { direction: "Part-Dieu", times: [clock(8, 15)] },
+    ]);
   });
 
   it("limite à huit passages par ligne et par sens", () => {

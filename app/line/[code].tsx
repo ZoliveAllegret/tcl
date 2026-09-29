@@ -1,5 +1,5 @@
 import { router, Stack, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, Text, View } from "react-native";
 
 import { Icon } from "@/components/Icon";
@@ -8,7 +8,10 @@ import { NavBar, useNavBarInset } from "@/components/NavBar";
 import { Badge, Button, EmptyState, SectionLabel } from "@/components/ui";
 import { useLineDisruptions } from "@/src/hooks/useDisruptionCounts";
 import { stopsOnLine } from "@/src/lines/groupLines";
+import { loadPreparedTimetable } from "@/src/schedule/prepared";
+import { lineDayBoard, type LineDayBoard } from "@/src/schedule/timetable";
 import { getLineName, loadLineNames } from "@/src/schedule/theoretical";
+import { oppositePlatforms } from "@/src/stops/siblings";
 import { useStops } from "@/src/stops/StopsProvider";
 import { NEUTRAL_LINE, lineColor, makeStyles, useTheme, vehicleMode } from "@/src/theme";
 import type { Stop } from "@/src/types";
@@ -24,6 +27,9 @@ export default function LineScreen() {
   const [named, setNamed] = useState(Boolean(getLineName(code)));
   const navInset = useNavBarInset();
   const lineStops = useMemo(() => stopsOnLine(stops, code), [code, stops]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const listRef = useRef<FlatList<Stop>>(null);
+  const selected = lineStops.find((stop) => stop.id === selectedId) ?? lineStops[0];
   const { disruptions, loading: disruptionsLoading } = useLineDisruptions(code);
 
   useEffect(() => {
@@ -49,7 +55,9 @@ export default function LineScreen() {
     <View style={styles.screen}>
       <Stack.Screen options={{ title: code ? `Ligne ${code}` : "Ligne" }} />
       <FlatList
+        ref={listRef}
         data={lineStops}
+        extraData={selected?.id}
         keyExtractor={(stop) => String(stop.id)}
         contentContainerStyle={[styles.list, { paddingBottom: navInset }]}
         ListHeaderComponent={
@@ -91,6 +99,7 @@ export default function LineScreen() {
                 </View>
               ) : null}
             </View>
+            <LineSchedule code={code} stop={selected} stops={stops} />
             {lineStops.length > 0 ? <SectionLabel>Arrêts · ordre alphabétique</SectionLabel> : null}
           </View>
         }
@@ -102,10 +111,80 @@ export default function LineScreen() {
             color={color}
             first={index === 0}
             last={index === lineStops.length - 1}
+            selected={item.id === selected?.id}
+            onSelect={() => {
+              setSelectedId(item.id);
+              listRef.current?.scrollToOffset({ offset: 0, animated: true });
+            }}
           />
         )}
       />
       <NavBar />
+    </View>
+  );
+}
+
+function LineSchedule({ code, stop, stops }: { code: string; stop: Stop | undefined; stops: Stop[] }) {
+  const styles = useStyles();
+  const [board, setBoard] = useState<LineDayBoard[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const platformKey = stop ? [stop.id, ...oppositePlatforms(stop, stops).map((platform) => platform.id)].join(",") : "";
+
+  useEffect(() => {
+    if (!stop) {
+      return;
+    }
+    let cancelled = false;
+    const stopIds = platformKey.split(",").map(Number);
+    setBoard(null);
+    setError(null);
+    void loadPreparedTimetable()
+      .then((table) => {
+        if (!cancelled) {
+          setBoard(lineDayBoard(table, stopIds, code, new Date()));
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "Horaires indisponibles.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, platformKey, stop]);
+
+  if (!stop) {
+    return null;
+  }
+  const nowLabel = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <View>
+      <SectionLabel trailing={<Text style={styles.hint}>aujourd'hui</Text>}>Horaires</SectionLabel>
+      <Text style={styles.scheduleStop} numberOfLines={1}>
+        {stop.name}
+      </Text>
+      {board === null && !error ? <Text style={styles.hint}>Chargement des horaires…</Text> : null}
+      {error ? <Text style={styles.hint}>{error}</Text> : null}
+      {board && board.length === 0 ? <Text style={styles.hint}>Aucun passage aujourd'hui à cet arrêt.</Text> : null}
+      {board?.map((group) => {
+        const nextIndex = group.times.findIndex((time) => time >= nowLabel);
+        return (
+          <View key={group.direction} style={styles.scheduleCard}>
+            <Text style={styles.scheduleDirection} numberOfLines={2}>
+              vers {group.direction}
+            </Text>
+            <View style={styles.times}>
+              {group.times.map((time, index) => (
+                <Text key={`${group.direction}-${time}`} style={[styles.time, index === nextIndex && styles.timeNext]}>
+                  {time}
+                </Text>
+              ))}
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -116,29 +195,35 @@ function LineStopRow({
   color,
   first,
   last,
+  selected,
+  onSelect,
 }: {
   stop: Stop;
   code: string;
   color: string;
   first: boolean;
   last: boolean;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const styles = useStyles();
   const t = useTheme();
   const connections = stop.lines.filter((line) => line !== code).slice(0, 6);
   return (
     <Pressable
-      onPress={() => router.push({ pathname: "/stop/[id]", params: { id: String(stop.id) } })}
+      onPress={onSelect}
       style={({ pressed }) => [
         styles.stop,
         first && styles.stopFirst,
         last && styles.stopLast,
+        selected && styles.stopSelected,
         pressed && styles.pressed,
       ]}
       accessibilityRole="button"
+      accessibilityState={{ selected }}
       accessibilityLabel={`${stop.name}, ${stop.commune}`}
     >
-      <View style={[styles.dot, { borderColor: color }]} />
+      <View style={[styles.dot, { borderColor: color }, selected && { backgroundColor: color }]} />
       <View style={[styles.stopBody, !last && styles.divider]}>
         <View style={styles.stopCopy}>
           <Text style={styles.stopName} numberOfLines={1}>
@@ -155,7 +240,14 @@ function LineStopRow({
             </View>
           ) : null}
         </View>
-        <Icon name="chevron" color={t.colors.muted} size={18} />
+        <Pressable
+          onPress={() => router.push({ pathname: "/stop/[id]", params: { id: String(stop.id) } })}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel={`Ouvrir ${stop.name}`}
+        >
+          <Icon name="chevron" color={t.colors.muted} size={18} />
+        </Pressable>
       </View>
     </Pressable>
   );
@@ -225,6 +317,50 @@ const useStyles = makeStyles((t) => ({
     ...t.type.caption,
     color: t.colors.danger,
     fontWeight: "700",
+  },
+  hint: {
+    ...t.type.caption,
+    color: t.colors.muted,
+  },
+  scheduleStop: {
+    ...t.type.bodyStrong,
+    color: t.colors.ink,
+    marginBottom: t.space.sm,
+  },
+  scheduleCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: t.radius.lg,
+    padding: t.space.lg,
+    gap: t.space.md,
+    marginBottom: t.space.sm,
+    borderWidth: t.scheme === "dark" ? 1 : 0,
+    borderColor: t.colors.border,
+  },
+  scheduleDirection: {
+    ...t.type.callout,
+    fontWeight: "800",
+    color: t.colors.ink,
+  },
+  times: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  time: {
+    ...t.type.time,
+    color: t.colors.ink,
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: t.radius.sm,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  timeNext: {
+    backgroundColor: t.colors.accent,
+    color: t.colors.accentInk,
+  },
+  stopSelected: {
+    backgroundColor: t.colors.surfaceMuted,
   },
   stop: {
     flexDirection: "row",

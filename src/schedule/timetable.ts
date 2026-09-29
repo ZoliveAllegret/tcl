@@ -29,6 +29,11 @@ export type ClockDeparture = {
   at: number;
 };
 
+export type LineDayBoard = {
+  direction: string;
+  times: string[];
+};
+
 const MAGIC = 0x544c4354;
 const VERSION = 1;
 
@@ -321,4 +326,51 @@ export function departuresFromTimetable(
   }
   departures.sort((left, right) => left.at - right.at);
   return departures;
+}
+
+/** Toutes les heures d'une ligne à un arrêt, pour le jour calendaire demandé. */
+export function lineDayBoard(table: PreparedTimetable, stopIds: number[], line: string, day: Date): LineDayBoard[] {
+  const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  const end = new Date(start);
+  end.setDate(start.getDate() + 1);
+  const from = start.getTime();
+  const until = end.getTime();
+  const yesterday = new Date(start);
+  yesterday.setDate(start.getDate() - 1);
+  const buckets = new Map<string, { at: number; time: string }[]>();
+
+  for (const stopId of stopIds) {
+    for (const group of table.byStop.get(stopId) ?? []) {
+      const service = table.services[group.service];
+      const groupLine = table.lines[group.line];
+      const direction = table.directions[group.direction];
+      if (!service || groupLine !== line || !direction) {
+        continue;
+      }
+      const bucket = buckets.get(direction) ?? [];
+      for (const serviceDay of [yesterday, start]) {
+        if (!runs(service, serviceDay)) {
+          continue;
+        }
+        for (const minute of group.minutes) {
+          const instant = new Date(serviceDay);
+          instant.setMinutes(minute);
+          const at = instant.getTime();
+          if (at < from || at >= until || bucket.some((item) => item.at === at)) {
+            continue;
+          }
+          bucket.push({ at, time: formatTime(at) });
+        }
+      }
+      buckets.set(direction, bucket);
+    }
+  }
+
+  return [...buckets.entries()]
+    .map(([direction, items]) => ({
+      direction,
+      times: items.sort((left, right) => left.at - right.at).map((item) => item.time),
+    }))
+    .filter((board) => board.times.length > 0)
+    .sort((left, right) => left.direction.localeCompare(right.direction, "fr"));
 }
