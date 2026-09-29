@@ -1,4 +1,4 @@
-import { collectLines, sectionLines, uniqueStops } from "@/src/lines/groupLines";
+import { collectLines, sectionLines, stopsOnLine, uniqueStops } from "@/src/lines/groupLines";
 
 import { stop } from "./support";
 
@@ -11,6 +11,16 @@ test("uniqueStops fusionne les quais opposés d'une même ligne", () => {
   const stations = uniqueStops([south, north, bus, metro]);
   expect(stations.map((item) => item.name).sort()).toEqual(["Brotteaux", "Debourg", "Debourg"]);
   expect(stations.find((item) => item.id === 1)?.wheelchair).toBe(true);
+});
+
+test("stopsOnLine suit l'ordre de passage quand il est fourni", () => {
+  const stops = [
+    stop({ id: 10, name: "Gamma", lines: ["A"] }),
+    stop({ id: 20, name: "Alpha", lines: ["A"] }),
+    stop({ id: 30, name: "Beta", lines: ["A"] }),
+  ];
+  expect(stopsOnLine(stops, "A", [20, 30, 10]).map((item) => item.name)).toEqual(["Alpha", "Beta", "Gamma"]);
+  expect(stopsOnLine(stops, "A").map((item) => item.name)).toEqual(["Alpha", "Beta", "Gamma"]);
 });
 
 test("collectLines compte les stations et sectionLines filtre par nom", () => {

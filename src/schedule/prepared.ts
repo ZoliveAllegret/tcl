@@ -4,15 +4,18 @@ import { decodeTimetable, type PreparedTimetable } from "@/src/schedule/timetabl
 export type DataManifest = {
   stops: string;
   timetable: string;
+  lineOrder?: string;
 };
 
 const DATA_CACHE = "tcl-data-v1";
 
 type CachedStops = { hash: string; stops: Stop[] };
 type CachedTimetable = { hash: string; table: PreparedTimetable };
+type CachedLineOrder = { hash: string; order: Record<string, number[]> };
 
 let memoryStops: CachedStops | null = null;
 let memoryTable: CachedTimetable | null = null;
+let memoryLineOrder: CachedLineOrder | null = null;
 let manifestTask: Promise<DataManifest> | null = null;
 let hydrateTask: Promise<void> | null = null;
 let checkTask: Promise<void> | null = null;
@@ -109,6 +112,10 @@ function currentTimetable(): CachedTimetable | null {
   return memoryTable;
 }
 
+function currentLineOrder(): CachedLineOrder | null {
+  return memoryLineOrder;
+}
+
 function loadManifest(): Promise<DataManifest> {
   if (!manifestTask) {
     manifestTask = fetch(dataUrl("manifest.json"), { cache: "no-store" })
@@ -143,6 +150,15 @@ async function hydrate(): Promise<void> {
         const cached = await readCached(dataUrl("timetable.bin"));
         if (cached) {
           memoryTable = { hash: cached.hash, table: decodeTimetable(cached.bytes) };
+        }
+      }
+      if (!memoryLineOrder) {
+        const cached = await readCached(dataUrl("line-order.json"));
+        if (cached) {
+          memoryLineOrder = {
+            hash: cached.hash,
+            order: JSON.parse(new TextDecoder().decode(cached.bytes)) as Record<string, number[]>,
+          };
         }
       }
     })().catch((error: unknown) => {
@@ -190,11 +206,27 @@ async function syncTimetable(manifest: DataManifest): Promise<void> {
   await remember(dataUrl("timetable.bin"), bytes, "application/octet-stream", hash);
 }
 
+async function syncLineOrder(manifest: DataManifest): Promise<void> {
+  if (!manifest.lineOrder) {
+    return;
+  }
+  if (memoryLineOrder?.hash === manifest.lineOrder) {
+    return;
+  }
+  const bytes = await download(dataUrl("line-order.json"));
+  const hash = await fingerprint(bytes);
+  if (hash !== manifest.lineOrder) {
+    throw new Error("L'ordre de passage ne correspond pas à la version annoncée.");
+  }
+  memoryLineOrder = { hash, order: JSON.parse(new TextDecoder().decode(bytes)) as Record<string, number[]> };
+  await remember(dataUrl("line-order.json"), bytes, "application/json", hash);
+}
+
 function checkForUpdates(): Promise<void> {
   if (!checkTask) {
     checkTask = (async () => {
       const manifest = await loadManifest();
-      await Promise.all([syncStops(manifest), syncTimetable(manifest)]);
+      await Promise.all([syncStops(manifest), syncTimetable(manifest), syncLineOrder(manifest)]);
     })().catch((error: unknown) => {
       checkTask = null;
       throw error;
@@ -254,4 +286,14 @@ export async function loadPreparedTimetable(): Promise<PreparedTimetable> {
     throw new Error("Les horaires préparés sont indisponibles.");
   }
   return ready.table;
+}
+
+export async function loadPreparedLineOrder(): Promise<Record<string, number[]>> {
+  await hydrate();
+  if (memoryLineOrder) {
+    void checkForUpdates().catch(() => undefined);
+    return memoryLineOrder.order;
+  }
+  await checkForUpdates();
+  return currentLineOrder()?.order ?? {};
 }

@@ -304,18 +304,103 @@ async function buildTimetable(entries: Map<string, Uint8Array>): Promise<Prepare
   return { lines, names, directions, services, byStop: packed };
 }
 
+/** Pour chaque ligne, l'ordre des arrêts du trajet GTFS le plus long. */
+async function buildLineOrder(entries: Map<string, Uint8Array>): Promise<Record<string, number[]>> {
+  const routes = (await inflateText(entries.get("routes.txt")!)).split("\n");
+  const routeIndex = headerIndex(routes[0] ?? "");
+  const routeLine = new Map<string, string>();
+  for (const rawLine of routes.slice(1)) {
+    const line = rawLine.replace(/\r$/, "");
+    if (!line) {
+      continue;
+    }
+    const fields = splitCsv(line);
+    const routeId = fields[routeIndex.route_id];
+    const code = fields[routeIndex.route_short_name];
+    if (routeId && code) {
+      routeLine.set(routeId, code);
+    }
+  }
+
+  const tripLine = new Map<string, string>();
+  let tripHeader = true;
+  let tripColumns: Record<string, number> = {};
+  await forEachDataLine(entries.get("trips.txt")!, (rawLine) => {
+    const fields = splitCsv(rawLine.replace(/^\uFEFF/, ""));
+    if (tripHeader) {
+      tripHeader = false;
+      tripColumns = Object.fromEntries(fields.map((name, index) => [name.trim(), index]));
+      return;
+    }
+    const tripId = fields[tripColumns.trip_id];
+    const code = routeLine.get(fields[tripColumns.route_id] ?? "");
+    if (tripId && code) {
+      tripLine.set(tripId, code);
+    }
+  });
+
+  const byTrip = new Map<string, { seq: number; stopId: number }[]>();
+  let header = true;
+  let columns: Record<string, number> = {};
+  await forEachDataLine(entries.get("stop_times.txt")!, (rawLine) => {
+    const fields = splitCsv(rawLine.replace(/^\uFEFF/, ""));
+    if (header) {
+      header = false;
+      if (fields[0] === "trip_id") {
+        columns = Object.fromEntries(fields.map((name, index) => [name.trim(), index]));
+        return;
+      }
+    }
+    const tripId = fields[columns.trip_id ?? 0];
+    if (!tripLine.has(tripId ?? "")) {
+      return;
+    }
+    const stopId = Number(fields[columns.stop_id ?? 3]);
+    const seq = Number(fields[columns.stop_sequence ?? 4]);
+    if (!Number.isFinite(stopId) || !Number.isFinite(seq)) {
+      return;
+    }
+    const rows = byTrip.get(tripId!) ?? [];
+    rows.push({ seq, stopId });
+    byTrip.set(tripId!, rows);
+  });
+
+  const best = new Map<string, number[]>();
+  for (const [tripId, line] of tripLine) {
+    const ordered = (byTrip.get(tripId) ?? []).sort((left, right) => left.seq - right.seq).map((row) => row.stopId);
+    const stops: number[] = [];
+    for (const stopId of ordered) {
+      if (stops[stops.length - 1] !== stopId) {
+        stops.push(stopId);
+      }
+    }
+    const previous = best.get(line);
+    if (!previous || stops.length > previous.length) {
+      best.set(line, stops);
+    }
+  }
+  console.log(`Ordre de passage ${best.size} lignes`);
+  return Object.fromEntries(best);
+}
+
 const directory = new URL("../public/data/", import.meta.url);
 mkdirSync(directory, { recursive: true });
 
 const [stops, entries] = await Promise.all([fetchStops(), fetchGtfs()]);
 const timetable = encodeTimetable(await buildTimetable(entries));
+const lineOrder = await buildLineOrder(entries);
 const stopsBytes = new TextEncoder().encode(JSON.stringify(stops));
+const lineOrderBytes = new TextEncoder().encode(JSON.stringify(lineOrder));
 const manifest = {
   stops: fingerprint(stopsBytes),
   timetable: fingerprint(timetable),
+  lineOrder: fingerprint(lineOrderBytes),
 };
 
 writeFileSync(new URL("stops.json", directory), stopsBytes);
 writeFileSync(new URL("timetable.bin", directory), timetable);
+writeFileSync(new URL("line-order.json", directory), lineOrderBytes);
 writeFileSync(new URL("manifest.json", directory), JSON.stringify(manifest));
-console.log(`stops.json ${stopsBytes.byteLength} o, timetable.bin ${timetable.byteLength} o, manifeste ${JSON.stringify(manifest)}`);
+console.log(
+  `stops.json ${stopsBytes.byteLength} o, timetable.bin ${timetable.byteLength} o, line-order.json ${lineOrderBytes.byteLength} o, manifeste ${JSON.stringify(manifest)}`,
+);

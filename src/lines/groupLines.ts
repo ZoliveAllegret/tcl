@@ -74,9 +74,36 @@ export function sectionLines(
     .filter((section) => section.data.length > 0);
 }
 
-export function stopsOnLine(stops: Stop[], code: string): Stop[] {
-  return stationsOf(stops.filter((stop) => stop.lines.includes(code))).sort(
-    (left, right) => left.name.localeCompare(right.name, "fr") || left.id - right.id,
+/** Ordre GTFS des arrêts le long de la ligne (trajet le plus long). */
+export function stopsOnLine(stops: Stop[], code: string, passageOrder?: number[]): Stop[] {
+  const lineStops = stops.filter((stop) => stop.lines.includes(code));
+  const stations = stationsOf(lineStops);
+  if (!passageOrder || passageOrder.length === 0) {
+    return stations.sort((left, right) => left.name.localeCompare(right.name, "fr") || left.id - right.id);
+  }
+  const rank = new Map<number, number>();
+  for (let index = 0; index < passageOrder.length; index += 1) {
+    const stopId = passageOrder[index];
+    if (stopId != null && !rank.has(stopId)) {
+      rank.set(stopId, index);
+    }
+  }
+  const stationRank = (stop: Stop): number => {
+    const platformIds = [stop.id, ...oppositePlatforms(stop, lineStops).map((platform) => platform.id)];
+    let best = Number.POSITIVE_INFINITY;
+    for (const id of platformIds) {
+      const index = rank.get(id);
+      if (index != null && index < best) {
+        best = index;
+      }
+    }
+    return best;
+  };
+  return stations.sort(
+    (left, right) =>
+      stationRank(left) - stationRank(right) ||
+      left.name.localeCompare(right.name, "fr") ||
+      left.id - right.id,
   );
 }
 

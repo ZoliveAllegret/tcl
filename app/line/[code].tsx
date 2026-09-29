@@ -5,10 +5,10 @@ import { FlatList, Pressable, Text, View } from "react-native";
 import { Icon } from "@/components/Icon";
 import { LineChip } from "@/components/LineChip";
 import { NavBar, useNavBarInset } from "@/components/NavBar";
-import { Badge, Button, EmptyState, SectionLabel } from "@/components/ui";
+import { Badge, Button, EmptyState, SectionLabel, SkeletonRows } from "@/components/ui";
 import { useLineDisruptions } from "@/src/hooks/useDisruptionCounts";
 import { stopsOnLine } from "@/src/lines/groupLines";
-import { loadPreparedTimetable } from "@/src/schedule/prepared";
+import { loadPreparedLineOrder, loadPreparedTimetable } from "@/src/schedule/prepared";
 import { lineDayBoard, type LineDayBoard } from "@/src/schedule/timetable";
 import { getLineName, loadLineNames } from "@/src/schedule/theoretical";
 import { oppositePlatforms } from "@/src/stops/siblings";
@@ -26,11 +26,37 @@ export default function LineScreen() {
   const { stops } = useStops();
   const [named, setNamed] = useState(Boolean(getLineName(code)));
   const navInset = useNavBarInset();
-  const lineStops = useMemo(() => stopsOnLine(stops, code), [code, stops]);
+  const [passageOrder, setPassageOrder] = useState<number[] | undefined>(undefined);
+  const lineStops = useMemo(() => {
+    if (passageOrder === undefined) {
+      return [];
+    }
+    return stopsOnLine(stops, code, passageOrder);
+  }, [code, passageOrder, stops]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const listRef = useRef<FlatList<Stop>>(null);
   const selected = lineStops.find((stop) => stop.id === selectedId) ?? lineStops[0];
   const { disruptions, loading: disruptionsLoading } = useLineDisruptions(code);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPassageOrder(undefined);
+    setSelectedId(null);
+    void loadPreparedLineOrder()
+      .then((order) => {
+        if (!cancelled) {
+          setPassageOrder(order[code] ?? []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPassageOrder([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,7 +126,14 @@ export default function LineScreen() {
               ) : null}
             </View>
             <LineSchedule code={code} stop={selected} stops={stops} />
-            {lineStops.length > 0 ? <SectionLabel>Arrêts · ordre alphabétique</SectionLabel> : null}
+            {passageOrder === undefined ? (
+              <View style={styles.pending}>
+                <Text style={styles.hint}>Chargement de la ligne…</Text>
+                <SkeletonRows count={3} />
+              </View>
+            ) : lineStops.length > 0 ? (
+              <SectionLabel>Arrêts · ordre de passage</SectionLabel>
+            ) : null}
           </View>
         }
         ListEmptyComponent={<EmptyState icon="empty" title="Aucun arrêt pour cette ligne" />}
@@ -321,6 +354,9 @@ const useStyles = makeStyles((t) => ({
   hint: {
     ...t.type.caption,
     color: t.colors.muted,
+  },
+  pending: {
+    gap: t.space.sm,
   },
   scheduleStop: {
     ...t.type.bodyStrong,
