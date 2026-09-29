@@ -127,7 +127,10 @@ export default function LineScreen() {
                 <SkeletonRows count={3} />
               </View>
             ) : lineStops.length > 0 ? (
-              <SectionLabel>Arrêts · ordre de passage</SectionLabel>
+              <View>
+                <SectionLabel>Arrêts · ordre de passage</SectionLabel>
+                <Text style={styles.listHint}>Appuyez sur un arrêt pour voir les horaires du jour.</Text>
+              </View>
             ) : null}
           </View>
         }
@@ -217,18 +220,20 @@ function StopScheduleLightbox({
       <View style={styles.overlay}>
         <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel="Fermer" />
         <View style={[styles.panel, t.elevation]} accessibilityViewIsModal>
+          <View style={[styles.panelAccent, { backgroundColor: color }]} />
           <View style={styles.panelHead}>
-            <View style={[styles.panelBand, { backgroundColor: color }]} />
-            <Pressable
-              onPress={onClose}
-              hitSlop={12}
-              style={styles.close}
-              accessibilityRole="button"
-              accessibilityLabel="Fermer"
-            >
-              <Icon name="close" color={t.colors.muted} size={22} />
-            </Pressable>
-            <LineChip line={code} />
+            <View style={styles.panelTop}>
+              <LineChip line={code} />
+              <Pressable
+                onPress={onClose}
+                hitSlop={8}
+                style={styles.closeButton}
+                accessibilityRole="button"
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" color={t.colors.ink} size={20} />
+              </Pressable>
+            </View>
             <Text style={styles.panelTitle} numberOfLines={2}>
               {stop.name}
             </Text>
@@ -324,7 +329,11 @@ function LineStopRow({
             </View>
           ) : null}
         </View>
-        <Icon name="clock" color={t.colors.muted} size={20} />
+        <View style={styles.rowAction}>
+          <Icon name="clock" color={t.colors.accent} size={18} />
+          <Text style={styles.rowActionLabel}>Horaires</Text>
+          <Icon name="chevron" color={t.colors.muted} size={16} />
+        </View>
       </View>
     </Pressable>
   );
@@ -349,30 +358,33 @@ const useLightboxStyles = makeStyles((t) => ({
     borderWidth: t.scheme === "dark" ? 1 : 0,
     borderColor: t.colors.border,
   },
-  panelBand: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
+  panelAccent: {
     height: 5,
   },
   panelHead: {
     padding: t.space.lg,
-    paddingTop: t.space.lg + 4,
     gap: t.space.xs,
   },
-  close: {
-    position: "absolute",
-    top: t.space.md,
-    right: t.space.md,
-    zIndex: 1,
-    padding: 4,
+  panelTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: t.space.sm,
+  },
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: t.colors.surfaceMuted,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: t.colors.border,
   },
   panelTitle: {
     ...t.type.title,
     fontSize: 22,
     color: t.colors.ink,
-    paddingRight: t.space.xl,
   },
   panelMeta: {
     ...t.type.caption,
@@ -502,6 +514,22 @@ const useStyles = makeStyles((t) => ({
   },
   pending: {
     gap: t.space.sm,
+  },
+  listHint: {
+    ...t.type.caption,
+    color: t.colors.muted,
+    marginBottom: t.space.sm,
+  },
+  rowAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingLeft: t.space.xs,
+  },
+  rowActionLabel: {
+    ...t.type.caption,
+    fontWeight: "700",
+    color: t.colors.accent,
   },
   stop: {
     flexDirection: "row",
