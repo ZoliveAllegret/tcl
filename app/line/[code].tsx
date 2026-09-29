@@ -1,6 +1,6 @@
 import { router, Stack, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Pressable, Text, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { FlatList, Modal, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Icon } from "@/components/Icon";
 import { LineChip } from "@/components/LineChip";
@@ -27,21 +27,19 @@ export default function LineScreen() {
   const [named, setNamed] = useState(Boolean(getLineName(code)));
   const navInset = useNavBarInset();
   const [passageOrder, setPassageOrder] = useState<number[] | undefined>(undefined);
+  const [lightboxStop, setLightboxStop] = useState<Stop | null>(null);
   const lineStops = useMemo(() => {
     if (passageOrder === undefined) {
       return [];
     }
     return stopsOnLine(stops, code, passageOrder);
   }, [code, passageOrder, stops]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const listRef = useRef<FlatList<Stop>>(null);
-  const selected = lineStops.find((stop) => stop.id === selectedId) ?? lineStops[0];
   const { disruptions, loading: disruptionsLoading } = useLineDisruptions(code);
 
   useEffect(() => {
     let cancelled = false;
     setPassageOrder(undefined);
-    setSelectedId(null);
+    setLightboxStop(null);
     void loadPreparedLineOrder()
       .then((order) => {
         if (!cancelled) {
@@ -81,9 +79,7 @@ export default function LineScreen() {
     <View style={styles.screen}>
       <Stack.Screen options={{ title: code ? `Ligne ${code}` : "Ligne" }} />
       <FlatList
-        ref={listRef}
         data={lineStops}
-        extraData={selected?.id}
         keyExtractor={(stop) => String(stop.id)}
         contentContainerStyle={[styles.list, { paddingBottom: navInset }]}
         ListHeaderComponent={
@@ -125,7 +121,6 @@ export default function LineScreen() {
                 </View>
               ) : null}
             </View>
-            <LineSchedule code={code} stop={selected} stops={stops} />
             {passageOrder === undefined ? (
               <View style={styles.pending}>
                 <Text style={styles.hint}>Chargement de la ligne…</Text>
@@ -144,31 +139,55 @@ export default function LineScreen() {
             color={color}
             first={index === 0}
             last={index === lineStops.length - 1}
-            selected={item.id === selected?.id}
-            onSelect={() => {
-              setSelectedId(item.id);
-              listRef.current?.scrollToOffset({ offset: 0, animated: true });
-            }}
+            onPress={() => setLightboxStop(item)}
           />
         )}
+      />
+      <StopScheduleLightbox
+        visible={lightboxStop != null}
+        stop={lightboxStop}
+        code={code}
+        color={color}
+        stops={stops}
+        onClose={() => setLightboxStop(null)}
+        onOpenStop={(stopId) => {
+          setLightboxStop(null);
+          router.push({ pathname: "/stop/[id]", params: { id: String(stopId) } });
+        }}
       />
       <NavBar />
     </View>
   );
 }
 
-function LineSchedule({ code, stop, stops }: { code: string; stop: Stop | undefined; stops: Stop[] }) {
-  const styles = useStyles();
+function StopScheduleLightbox({
+  visible,
+  stop,
+  code,
+  color,
+  stops,
+  onClose,
+  onOpenStop,
+}: {
+  visible: boolean;
+  stop: Stop | null;
+  code: string;
+  color: string;
+  stops: Stop[];
+  onClose: () => void;
+  onOpenStop: (stopId: number) => void;
+}) {
+  const styles = useLightboxStyles();
+  const t = useTheme();
   const [board, setBoard] = useState<LineDayBoard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const platformKey = stop ? [stop.id, ...oppositePlatforms(stop, stops).map((platform) => platform.id)].join(",") : "";
 
   useEffect(() => {
-    if (!stop) {
+    if (!visible || !stop) {
       return;
     }
     let cancelled = false;
-    const stopIds = platformKey.split(",").map(Number);
+    const stopIds = [stop.id, ...oppositePlatforms(stop, stops).map((platform) => platform.id)];
     setBoard(null);
     setError(null);
     void loadPreparedTimetable()
@@ -185,40 +204,76 @@ function LineSchedule({ code, stop, stops }: { code: string; stop: Stop | undefi
     return () => {
       cancelled = true;
     };
-  }, [code, platformKey, stop]);
+  }, [code, stop, stops, visible]);
 
   if (!stop) {
     return null;
   }
+
   const nowLabel = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 
   return (
-    <View>
-      <SectionLabel trailing={<Text style={styles.hint}>aujourd'hui</Text>}>Horaires</SectionLabel>
-      <Text style={styles.scheduleStop} numberOfLines={1}>
-        {stop.name}
-      </Text>
-      {board === null && !error ? <Text style={styles.hint}>Chargement des horaires…</Text> : null}
-      {error ? <Text style={styles.hint}>{error}</Text> : null}
-      {board && board.length === 0 ? <Text style={styles.hint}>Aucun passage aujourd'hui à cet arrêt.</Text> : null}
-      {board?.map((group) => {
-        const nextIndex = group.times.findIndex((time) => time >= nowLabel);
-        return (
-          <View key={group.direction} style={styles.scheduleCard}>
-            <Text style={styles.scheduleDirection} numberOfLines={2}>
-              vers {group.direction}
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel="Fermer" />
+        <View style={[styles.panel, t.elevation]} accessibilityViewIsModal>
+          <View style={styles.panelHead}>
+            <View style={[styles.panelBand, { backgroundColor: color }]} />
+            <Pressable
+              onPress={onClose}
+              hitSlop={12}
+              style={styles.close}
+              accessibilityRole="button"
+              accessibilityLabel="Fermer"
+            >
+              <Icon name="close" color={t.colors.muted} size={22} />
+            </Pressable>
+            <LineChip line={code} />
+            <Text style={styles.panelTitle} numberOfLines={2}>
+              {stop.name}
             </Text>
-            <View style={styles.times}>
-              {group.times.map((time, index) => (
-                <Text key={`${group.direction}-${time}`} style={[styles.time, index === nextIndex && styles.timeNext]}>
-                  {time}
-                </Text>
-              ))}
-            </View>
+            <Text style={styles.panelMeta} numberOfLines={1}>
+              {stop.commune}
+            </Text>
+            <Text style={styles.panelHint}>Horaires · aujourd'hui</Text>
           </View>
-        );
-      })}
-    </View>
+          <ScrollView style={styles.panelScroll} contentContainerStyle={styles.panelBody}>
+            {board === null && !error ? <Text style={styles.muted}>Chargement des horaires…</Text> : null}
+            {error ? <Text style={styles.muted}>{error}</Text> : null}
+            {board && board.length === 0 ? (
+              <Text style={styles.muted}>Aucun passage aujourd'hui à cet arrêt.</Text>
+            ) : null}
+            {board?.map((group) => {
+              const nextIndex = group.times.findIndex((time) => time >= nowLabel);
+              return (
+                <View key={group.direction} style={styles.directionBlock}>
+                  <Text style={styles.directionLabel} numberOfLines={2}>
+                    vers {group.direction}
+                  </Text>
+                  <View style={styles.times}>
+                    {group.times.map((time, index) => (
+                      <Text
+                        key={`${group.direction}-${time}`}
+                        style={[styles.time, index === nextIndex && styles.timeNext]}
+                      >
+                        {time}
+                      </Text>
+                    ))}
+                  </View>
+                </View>
+              );
+            })}
+          </ScrollView>
+          <View style={styles.panelFoot}>
+            <Button
+              icon="chevron"
+              label="Fiche arrêt"
+              onPress={() => onOpenStop(stop.id)}
+            />
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -228,35 +283,31 @@ function LineStopRow({
   color,
   first,
   last,
-  selected,
-  onSelect,
+  onPress,
 }: {
   stop: Stop;
   code: string;
   color: string;
   first: boolean;
   last: boolean;
-  selected: boolean;
-  onSelect: () => void;
+  onPress: () => void;
 }) {
   const styles = useStyles();
   const t = useTheme();
   const connections = stop.lines.filter((line) => line !== code).slice(0, 6);
   return (
     <Pressable
-      onPress={onSelect}
+      onPress={onPress}
       style={({ pressed }) => [
         styles.stop,
         first && styles.stopFirst,
         last && styles.stopLast,
-        selected && styles.stopSelected,
         pressed && styles.pressed,
       ]}
       accessibilityRole="button"
-      accessibilityState={{ selected }}
-      accessibilityLabel={`${stop.name}, ${stop.commune}`}
+      accessibilityLabel={`${stop.name}, ${stop.commune}, horaires`}
     >
-      <View style={[styles.dot, { borderColor: color }, selected && { backgroundColor: color }]} />
+      <View style={[styles.dot, { borderColor: color }]} />
       <View style={[styles.stopBody, !last && styles.divider]}>
         <View style={styles.stopCopy}>
           <Text style={styles.stopName} numberOfLines={1}>
@@ -273,18 +324,112 @@ function LineStopRow({
             </View>
           ) : null}
         </View>
-        <Pressable
-          onPress={() => router.push({ pathname: "/stop/[id]", params: { id: String(stop.id) } })}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel={`Ouvrir ${stop.name}`}
-        >
-          <Icon name="chevron" color={t.colors.muted} size={18} />
-        </Pressable>
+        <Icon name="clock" color={t.colors.muted} size={20} />
       </View>
     </Pressable>
   );
 }
+
+const useLightboxStyles = makeStyles((t) => ({
+  overlay: {
+    flex: 1,
+    justifyContent: "center",
+    padding: t.space.lg,
+    paddingVertical: t.space.xl,
+  },
+  backdrop: {
+    ...({ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 } as const),
+    backgroundColor: "rgba(15, 18, 24, 0.55)",
+  },
+  panel: {
+    maxHeight: "88%",
+    backgroundColor: t.colors.surface,
+    borderRadius: t.radius.xl,
+    overflow: "hidden",
+    borderWidth: t.scheme === "dark" ? 1 : 0,
+    borderColor: t.colors.border,
+  },
+  panelBand: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 5,
+  },
+  panelHead: {
+    padding: t.space.lg,
+    paddingTop: t.space.lg + 4,
+    gap: t.space.xs,
+  },
+  close: {
+    position: "absolute",
+    top: t.space.md,
+    right: t.space.md,
+    zIndex: 1,
+    padding: 4,
+  },
+  panelTitle: {
+    ...t.type.title,
+    fontSize: 22,
+    color: t.colors.ink,
+    paddingRight: t.space.xl,
+  },
+  panelMeta: {
+    ...t.type.caption,
+    color: t.colors.muted,
+  },
+  panelHint: {
+    ...t.type.caption,
+    color: t.colors.muted,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginTop: t.space.sm,
+  },
+  panelScroll: {
+    flexGrow: 0,
+  },
+  panelBody: {
+    paddingHorizontal: t.space.lg,
+    paddingBottom: t.space.md,
+    gap: t.space.md,
+  },
+  panelFoot: {
+    padding: t.space.lg,
+    paddingTop: t.space.sm,
+    borderTopWidth: 1,
+    borderTopColor: t.colors.border,
+  },
+  directionBlock: {
+    gap: t.space.sm,
+  },
+  directionLabel: {
+    ...t.type.callout,
+    fontWeight: "800",
+    color: t.colors.ink,
+  },
+  times: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  time: {
+    ...t.type.time,
+    color: t.colors.ink,
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: t.radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  timeNext: {
+    backgroundColor: t.colors.accent,
+    color: t.colors.accentInk,
+  },
+  muted: {
+    ...t.type.caption,
+    color: t.colors.muted,
+  },
+}));
 
 const useStyles = makeStyles((t) => ({
   screen: {
@@ -357,46 +502,6 @@ const useStyles = makeStyles((t) => ({
   },
   pending: {
     gap: t.space.sm,
-  },
-  scheduleStop: {
-    ...t.type.bodyStrong,
-    color: t.colors.ink,
-    marginBottom: t.space.sm,
-  },
-  scheduleCard: {
-    backgroundColor: t.colors.surface,
-    borderRadius: t.radius.lg,
-    padding: t.space.lg,
-    gap: t.space.md,
-    marginBottom: t.space.sm,
-    borderWidth: t.scheme === "dark" ? 1 : 0,
-    borderColor: t.colors.border,
-  },
-  scheduleDirection: {
-    ...t.type.callout,
-    fontWeight: "800",
-    color: t.colors.ink,
-  },
-  times: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  time: {
-    ...t.type.time,
-    color: t.colors.ink,
-    backgroundColor: t.colors.surfaceMuted,
-    borderRadius: t.radius.sm,
-    overflow: "hidden",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  timeNext: {
-    backgroundColor: t.colors.accent,
-    color: t.colors.accentInk,
-  },
-  stopSelected: {
-    backgroundColor: t.colors.surfaceMuted,
   },
   stop: {
     flexDirection: "row",
