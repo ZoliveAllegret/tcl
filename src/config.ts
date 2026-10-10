@@ -6,8 +6,8 @@
  * Le couple demo/demo4dev du doc renvoie désormais 401 : on ne l'envoie plus en Basic Auth.
  */
 export const grandLyonConfig = {
-  username: process.env.EXPO_PUBLIC_GRANDLYON_USERNAME || "",
-  password: process.env.EXPO_PUBLIC_GRANDLYON_PASSWORD || "",
+  username: (process.env.EXPO_PUBLIC_GRANDLYON_USERNAME ?? "").trim(),
+  password: (process.env.EXPO_PUBLIC_GRANDLYON_PASSWORD ?? "").trim(),
   stopsUrl:
     "https://data.grandlyon.com/fr/datapusher/ws/rdata/tcl_sytral.tclarret/all.json",
   passagesUrl:

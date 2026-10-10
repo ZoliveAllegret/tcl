@@ -38,16 +38,21 @@ type RawPassage = {
 
 const PAGE_SIZE = 1000;
 
-async function fetchJson<T>(url: string, cache?: RequestCache): Promise<T> {
+async function fetchJson<T>(
+  url: string,
+  options?: { cache?: RequestCache; /** Arrêts : public sans auth ; un mauvais Basic Auth renvoie 401. */ auth?: boolean },
+): Promise<T> {
+  const useAuth = options?.auth !== false;
+  const headers = useAuth ? grandLyonFetchHeaders() : { Accept: "application/json" };
   const response = await fetch(url, {
-    cache,
-    headers: grandLyonFetchHeaders(),
+    cache: options?.cache,
+    headers,
   });
   if (!response.ok) {
     if (response.status === 401) {
       throw new Error(
         hasGrandLyonApiAccount()
-          ? "Identifiants API Grand Lyon refusés ou expirés."
+          ? "Mot de passe plateforme Data refusé (pas GrandLyon Connect) — voir README."
           : "Temps réel indisponible sans compte API Data Grand Lyon (voir README).",
       );
     }
@@ -87,7 +92,10 @@ export async function fetchAllStops(onProgress?: (loaded: number, total: number 
   let start = 1;
   let total: number | null = null;
   try {
-    const summary = await fetchJson<TableResponse<RawStop>>(grandLyonConfig.stopsUrl.replace(/\/all\.json$/, ".json"));
+    const summary = await fetchJson<TableResponse<RawStop>>(
+      grandLyonConfig.stopsUrl.replace(/\/all\.json$/, ".json"),
+      { auth: false },
+    );
     if (typeof summary.nb_records === "number" && summary.nb_records > 0) {
       total = summary.nb_records;
     }
@@ -98,7 +106,7 @@ export async function fetchAllStops(onProgress?: (loaded: number, total: number 
 
   while (start < 50_000) {
     const url = `${grandLyonConfig.stopsUrl}?compact=false&maxfeatures=${PAGE_SIZE}&start=${start}`;
-    const page = await fetchJson<TableResponse<RawStop>>(url);
+    const page = await fetchJson<TableResponse<RawStop>>(url, { auth: false });
     const values = page.values ?? [];
     let added = 0;
     for (const row of values) {
@@ -159,7 +167,7 @@ function asActivities(value: unknown): Record<string, unknown>[] {
 }
 
 export async function fetchVehicles(): Promise<Vehicle[]> {
-  const payload = await fetchJson<SiriResponse>(grandLyonConfig.vehiclesUrl, "no-store");
+  const payload = await fetchJson<SiriResponse>(grandLyonConfig.vehiclesUrl, { cache: "no-store" });
   const delivery = payload.Siri?.ServiceDelivery?.VehicleMonitoringDelivery?.[0];
   const activities = asActivities(delivery?.VehicleActivity);
   const vehicles: Vehicle[] = [];
@@ -214,7 +222,7 @@ function loadDisruptionCatalog(): Promise<Map<string, DisruptionRecord[]>> {
 }
 
 async function buildDisruptionCatalog(): Promise<Map<string, DisruptionRecord[]>> {
-  const payload = await fetchJson<unknown>(grandLyonConfig.disruptionsUrl, "no-store");
+  const payload = await fetchJson<unknown>(grandLyonConfig.disruptionsUrl, { cache: "no-store" });
   const now = Date.now();
   const byLine = new Map<string, Map<string, DisruptionRecord>>();
   for (const situation of situationElements(payload)) {
