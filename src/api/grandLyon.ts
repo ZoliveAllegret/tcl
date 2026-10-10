@@ -1,4 +1,4 @@
-import { grandLyonConfig } from "@/src/config";
+import { grandLyonConfig, grandLyonFetchHeaders, hasGrandLyonApiAccount } from "@/src/config";
 import {
   formatSiriDelay,
   lineFromSiriRef,
@@ -38,19 +38,19 @@ type RawPassage = {
 
 const PAGE_SIZE = 1000;
 
-function authorizationHeader(): string {
-  return `Basic ${globalThis.btoa(`${grandLyonConfig.username}:${grandLyonConfig.password}`)}`;
-}
-
 async function fetchJson<T>(url: string, cache?: RequestCache): Promise<T> {
   const response = await fetch(url, {
     cache,
-    headers: {
-      Accept: "application/json",
-      Authorization: authorizationHeader(),
-    },
+    headers: grandLyonFetchHeaders(),
   });
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error(
+        hasGrandLyonApiAccount()
+          ? "Identifiants API Grand Lyon refusés ou expirés."
+          : "Temps réel indisponible sans compte API Data Grand Lyon (voir README).",
+      );
+    }
     throw new Error(`Le service Grand Lyon a répondu ${response.status}.`);
   }
   return (await response.json()) as T;

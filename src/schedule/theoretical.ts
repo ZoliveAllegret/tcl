@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 
-import { grandLyonConfig } from "@/src/config";
+import { grandLyonConfig, grandLyonFetchHeaders } from "@/src/config";
 import { forEachDataLine, inflateText, readZipEntries } from "@/src/schedule/gtfsZip";
 import { loadPreparedTimetable, warmPreparedData } from "@/src/schedule/prepared";
 import { collectRideLinks, unpackRideGraph, type PackedRideGraph, type RideLink } from "@/src/schedule/rideGraph";
@@ -39,10 +39,6 @@ let lineNames = new Map<string, string>();
 
 export function getLineName(code: string): string | undefined {
   return lineNames.get(code);
-}
-
-function authorizationHeader(): string {
-  return `Basic ${globalThis.btoa(`${grandLyonConfig.username}:${grandLyonConfig.password}`)}`;
 }
 
 function dayKey(date: Date): string {
@@ -156,7 +152,7 @@ async function loadGtfsEntries(): Promise<Map<string, Uint8Array>> {
         return readZipEntries(cached);
       }
       const response = await fetch(grandLyonConfig.gtfsUrl, {
-        headers: { Authorization: authorizationHeader() },
+        headers: grandLyonFetchHeaders(),
       });
       if (!response.ok) {
         throw new Error(`Les horaires théoriques ont répondu ${response.status}.`);

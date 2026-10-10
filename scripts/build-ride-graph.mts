@@ -1,16 +1,21 @@
 import { writeFileSync } from "node:fs";
 
-import { grandLyonConfig } from "../src/config.ts";
+import { grandLyonConfig, grandLyonFetchHeaders } from "../src/config.ts";
 import { forEachDataLine, inflateText, readZipEntries } from "../src/schedule/gtfsZip.ts";
 import { collectRideLinks, packRideGraph, sameRideGraph, unpackRideGraph } from "../src/schedule/rideGraph.ts";
 
 const target = new URL("../public/ride-graph.json", import.meta.url);
 
-const response = await fetch(grandLyonConfig.gtfsUrl, {
-  headers: {
-    Authorization: `Basic ${Buffer.from(`${grandLyonConfig.username}:${grandLyonConfig.password}`).toString("base64")}`,
-  },
-});
+const gtfsHeaders = grandLyonFetchHeaders();
+if (!gtfsHeaders.Authorization) {
+  const user = process.env.GRANDLYON_USERNAME;
+  const pass = process.env.GRANDLYON_PASSWORD;
+  if (user && pass) {
+    gtfsHeaders.Authorization = `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
+  }
+}
+
+const response = await fetch(grandLyonConfig.gtfsUrl, { headers: gtfsHeaders });
 if (!response.ok) {
   throw new Error(`Les horaires théoriques ont répondu ${response.status}.`);
 }

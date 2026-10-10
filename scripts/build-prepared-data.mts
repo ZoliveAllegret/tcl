@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 
-import { grandLyonConfig } from "../src/config.ts";
+import { grandLyonConfig, grandLyonFetchHeaders } from "../src/config.ts";
 import { parseLines } from "../src/format.ts";
 import { forEachDataLine, inflateText, readZipEntries } from "../src/schedule/gtfsZip.ts";
 import { encodeTimetable, type DepartureGroup, type PreparedTimetable, type TimetableService } from "../src/schedule/timetable.ts";
@@ -28,8 +28,17 @@ type RawStop = {
   pmr: boolean | null;
 };
 
-function authHeader(): string {
-  return `Basic ${Buffer.from(`${grandLyonConfig.username}:${grandLyonConfig.password}`).toString("base64")}`;
+function fetchHeaders(): Record<string, string> {
+  const headers = grandLyonFetchHeaders();
+  if (headers.Authorization) {
+    return headers;
+  }
+  const user = process.env.GRANDLYON_USERNAME;
+  const pass = process.env.GRANDLYON_PASSWORD;
+  if (user && pass) {
+    headers.Authorization = `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
+  }
+  return headers;
 }
 
 function fingerprint(bytes: Uint8Array): string {
@@ -93,7 +102,7 @@ async function fetchStops(): Promise<Stop[]> {
   let start = 1;
   while (start < 50_000) {
     const url = `${grandLyonConfig.stopsUrl}?compact=false&maxfeatures=1000&start=${start}`;
-    const response = await fetch(url, { headers: { Accept: "application/json", Authorization: authHeader() } });
+    const response = await fetch(url, { headers: fetchHeaders() });
     if (!response.ok) {
       throw new Error(`Les arrêts ont répondu ${response.status}.`);
     }
@@ -128,7 +137,7 @@ async function fetchStops(): Promise<Stop[]> {
 }
 
 async function fetchGtfs(): Promise<Map<string, Uint8Array>> {
-  const response = await fetch(grandLyonConfig.gtfsUrl, { headers: { Authorization: authHeader() } });
+  const response = await fetch(grandLyonConfig.gtfsUrl, { headers: fetchHeaders() });
   if (!response.ok) {
     throw new Error(`Les horaires théoriques ont répondu ${response.status}.`);
   }

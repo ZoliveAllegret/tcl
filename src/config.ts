@@ -1,13 +1,13 @@
 /**
- * Compte de démonstration documenté par le portail data.grandlyon.com.
- * Un compte personnel se passe au build, sans le committer :
- * EXPO_PUBLIC_GRANDLYON_USERNAME et EXPO_PUBLIC_GRANDLYON_PASSWORD.
- * L'accès doit rester statique : Metro n'inline que process.env.EXPO_PUBLIC_*.
- * Ces valeurs restent visibles dans le JavaScript de la PWA.
+ * Temps réel et GTFS : compte technique de la plateforme Data Grand Lyon
+ * (mot de passe API via « mot de passe oublié » sur data.grandlyon.com, pas GrandLyon Connect seul).
+ * Au build : EXPO_PUBLIC_GRANDLYON_USERNAME et EXPO_PUBLIC_GRANDLYON_PASSWORD.
+ * Metro n'inline que process.env.EXPO_PUBLIC_* — ces valeurs restent visibles dans la PWA.
+ * Le couple demo/demo4dev du doc renvoie désormais 401 : on ne l'envoie plus en Basic Auth.
  */
 export const grandLyonConfig = {
-  username: process.env.EXPO_PUBLIC_GRANDLYON_USERNAME || "demo",
-  password: process.env.EXPO_PUBLIC_GRANDLYON_PASSWORD || "demo4dev",
+  username: process.env.EXPO_PUBLIC_GRANDLYON_USERNAME || "",
+  password: process.env.EXPO_PUBLIC_GRANDLYON_PASSWORD || "",
   stopsUrl:
     "https://data.grandlyon.com/fr/datapusher/ws/rdata/tcl_sytral.tclarret/all.json",
   passagesUrl:
@@ -27,3 +27,16 @@ export const LYON_CENTER: { latitude: number; longitude: number } = {
   latitude: 45.7578,
   longitude: 4.832,
 };
+
+/** Basic Auth uniquement si un compte API a été fourni au build. */
+export function grandLyonFetchHeaders(accept = "application/json"): Record<string, string> {
+  const headers: Record<string, string> = { Accept: accept };
+  if (grandLyonConfig.username && grandLyonConfig.password) {
+    headers.Authorization = `Basic ${globalThis.btoa(`${grandLyonConfig.username}:${grandLyonConfig.password}`)}`;
+  }
+  return headers;
+}
+
+export function hasGrandLyonApiAccount(): boolean {
+  return Boolean(grandLyonConfig.username && grandLyonConfig.password);
+}

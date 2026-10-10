@@ -39,7 +39,13 @@ Les passages et les positions se rechargent toutes les 10 secondes. Le flux véh
 
 ## Données
 
-Les identifiants et les URL sont dans `src/config.ts`. Le compte `demo` / `demo4dev` est celui documenté par le portail [data.grandlyon.com](https://data.grandlyon.com). Remplace-le par un compte personnel si le quota de démonstration sature.
+Les URL sont dans `src/config.ts`. **Passages, véhicules, perturbations et GTFS** exigent un compte technique sur la [plateforme Data Grand Lyon](https://data.grandlyon.com) (mot de passe API via « mot de passe oublié », voir [authentification](https://rdata-grandlyon.readthedocs.io/fr/latest/authentification.html)). Au build web :
+
+```bash
+EXPO_PUBLIC_GRANDLYON_USERNAME=… EXPO_PUBLIC_GRANDLYON_PASSWORD=… npx expo export -p web
+```
+
+Les scripts `scripts/build-prepared-data.mts` acceptent aussi `GRANDLYON_USERNAME` / `GRANDLYON_PASSWORD`. Sans identifiants, l’app s’appuie sur `public/data/` (horaires préparés) ; le temps réel affiche une erreur explicite au lieu d’un 401 générique.
 
 | Usage | Source |
 | --- | --- |

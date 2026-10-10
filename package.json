@@ -40,7 +40,8 @@
     "test": "jest --watchAll=false",
     "test:e2e": "playwright test",
     "export:web": "expo export --platform web",
-    "serve:web": "node server/static.mjs"
+    "serve:web": "node server/static.mjs",
+    "lint": "expo lint"
   },
   "jest": {
     "preset": "jest-expo",
