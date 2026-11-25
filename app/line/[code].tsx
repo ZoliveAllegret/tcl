@@ -126,9 +126,6 @@ export default function LineScreen() {
                 </View>
               ) : null}
             </View>
-            {lineStops.length > 0 ? (
-              <LineDayTimetableSection code={code} color={color} lineStops={lineStops} stops={stops} />
-            ) : null}
             {!orderReady && stops.length === 0 ? (
               <View style={styles.pending}>
                 <Text style={styles.hint}>Chargement de la ligne…</Text>
@@ -151,6 +148,11 @@ export default function LineScreen() {
           </View>
         }
         ListEmptyComponent={<EmptyState icon="empty" title="Aucun arrêt pour cette ligne" />}
+        ListFooterComponent={
+          lineStops.length > 0 ? (
+            <LineDayTimetableSection code={code} color={color} lineStops={lineStops} stops={stops} />
+          ) : null
+        }
         renderItem={({ item, index }) => {
           const extraStart = mainStops.length;
           const first = index === 0 || index === extraStart;
@@ -209,29 +211,25 @@ function LineDayTimetableSection({
 }) {
   const styles = useGridStyles();
   const t = useTheme();
-  const [summary, setSummary] = useState<LineDayBoard[] | null>(null);
   const [grids, setGrids] = useState<LineDirectionStopBoard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const stopNames = useMemo(() => new Map(lineStops.map((stop) => [stop.id, stop.name])), [lineStops]);
   const nowLabel = useMemo(
     () => new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
-    [summary, grids],
+    [grids],
   );
 
   useEffect(() => {
     let cancelled = false;
-    setSummary(null);
     setGrids(null);
     setError(null);
     const platformIds = (stop: Stop) => [stop.id, ...oppositePlatforms(stop, stops).map((platform) => platform.id)];
-    const allIds = [...new Set(lineStops.flatMap((stop) => platformIds(stop)))];
     void loadPreparedTimetable()
       .then((table) => {
         if (cancelled) {
           return;
         }
         const day = new Date();
-        setSummary(lineDayBoard(table, allIds, code, day));
         setGrids(
           lineDirectionStopBoards(table, lineStops, (stopId) => {
             const stop = lineStops.find((item) => item.id === stopId);
@@ -258,7 +256,7 @@ function LineDayTimetableSection({
     );
   }
 
-  if (summary === null || grids === null) {
+  if (grids === null) {
     return (
       <View style={styles.section}>
         <SectionLabel>Horaires du jour</SectionLabel>
@@ -267,7 +265,7 @@ function LineDayTimetableSection({
     );
   }
 
-  if (summary.length === 0 && grids.length === 0) {
+  if (grids.length === 0) {
     return (
       <View style={styles.section}>
         <SectionLabel>Horaires du jour</SectionLabel>
@@ -279,27 +277,9 @@ function LineDayTimetableSection({
   return (
     <View style={styles.section}>
       <SectionLabel>Horaires du jour</SectionLabel>
-      <Text style={styles.hint}>Faites défiler horizontalement pour parcourir toutes les heures.</Text>
-      {summary.map((group) => {
-        const nextIndex = group.times.findIndex((time) => time >= nowLabel);
-        return (
-          <View key={`sum-${group.direction}`} style={styles.summaryBlock}>
-            <Text style={styles.directionTitle} numberOfLines={2}>
-              vers {group.direction}
-            </Text>
-            <View style={styles.summaryTimes}>
-              {group.times.map((time, index) => (
-                <Text
-                  key={`${group.direction}-${time}-${index}`}
-                  style={[styles.summaryTime, index === nextIndex && styles.timeNext]}
-                >
-                  {time}
-                </Text>
-              ))}
-            </View>
-          </View>
-        );
-      })}
+      <Text style={styles.hint}>
+        Un départ par case, arrêt par arrêt. Faites défiler horizontalement pour voir toutes les heures.
+      </Text>
       {grids.map((board) => (
         <View key={board.direction} style={styles.gridBlock}>
           <Text style={styles.directionTitle} numberOfLines={2}>
@@ -558,27 +538,10 @@ const useGridStyles = makeStyles((t) => ({
     ...t.type.caption,
     color: t.colors.muted,
   },
-  summaryBlock: {
-    gap: t.space.xs,
-    marginBottom: t.space.sm,
-  },
   directionTitle: {
     ...t.type.callout,
     fontWeight: "800",
     color: t.colors.ink,
-  },
-  summaryTimes: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  summaryTime: {
-    ...t.type.time,
-    color: t.colors.ink,
-    backgroundColor: t.colors.surfaceMuted,
-    borderRadius: t.radius.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
   },
   gridBlock: {
     gap: t.space.sm,
