@@ -34,6 +34,17 @@ export type LineDayBoard = {
   times: string[];
 };
 
+export type LineStopTimesRow = {
+  stopId: number;
+  times: string[];
+};
+
+/** Horaires du jour par arrêt, pour un sens, dans l'ordre de la ligne. */
+export type LineDirectionStopBoard = {
+  direction: string;
+  rows: LineStopTimesRow[];
+};
+
 const MAGIC = 0x544c4354;
 const VERSION = 1;
 
@@ -326,6 +337,95 @@ export function departuresFromTimetable(
   }
   departures.sort((left, right) => left.at - right.at);
   return departures;
+}
+
+function dayTimesOnLineAtStops(
+  table: PreparedTimetable,
+  stopIds: number[],
+  line: string,
+  directionLabel: string,
+  day: Date,
+): string[] {
+  const lineIndex = table.lines.indexOf(line);
+  if (lineIndex < 0) {
+    return [];
+  }
+  const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  const end = new Date(start);
+  end.setDate(start.getDate() + 1);
+  const from = start.getTime();
+  const until = end.getTime();
+  const yesterday = new Date(start);
+  yesterday.setDate(start.getDate() - 1);
+  const bucket: { at: number; time: string }[] = [];
+
+  for (const stopId of stopIds) {
+    for (const group of table.byStop.get(stopId) ?? []) {
+      if (group.line !== lineIndex) {
+        continue;
+      }
+      const direction = table.directions[group.direction];
+      if (direction !== directionLabel) {
+        continue;
+      }
+      const service = table.services[group.service];
+      if (!service) {
+        continue;
+      }
+      for (const serviceDay of [yesterday, start]) {
+        if (!runs(service, serviceDay)) {
+          continue;
+        }
+        for (const minute of group.minutes) {
+          const instant = new Date(serviceDay);
+          instant.setMinutes(minute);
+          const at = instant.getTime();
+          if (at < from || at >= until || bucket.some((item) => item.at === at)) {
+            continue;
+          }
+          bucket.push({ at, time: formatTime(at) });
+        }
+      }
+    }
+  }
+
+  return bucket.sort((left, right) => left.at - right.at).map((item) => item.time);
+}
+
+/** Tableau arrêt × horaires du jour, par sens (colonnes = heures, défilement horizontal). */
+export function lineDirectionStopBoards(
+  table: PreparedTimetable,
+  orderedStops: { id: number }[],
+  stopIdsAtRow: (stopId: number) => number[],
+  line: string,
+  day: Date,
+): LineDirectionStopBoard[] {
+  const directions = new Set<string>();
+  const lineIndex = table.lines.indexOf(line);
+  if (lineIndex < 0) {
+    return [];
+  }
+  for (const stop of orderedStops) {
+    for (const group of table.byStop.get(stop.id) ?? []) {
+      if (group.line === lineIndex) {
+        const label = table.directions[group.direction];
+        if (label) {
+          directions.add(label);
+        }
+      }
+    }
+  }
+
+  return [...directions]
+    .sort((left, right) => left.localeCompare(right, "fr"))
+    .map((direction) => ({
+      direction,
+      rows: orderedStops.map((stop) => ({
+        stopId: stop.id,
+        times: dayTimesOnLineAtStops(table, stopIdsAtRow(stop.id), line, direction, day),
+      })),
+    }))
+    .filter((board) => board.rows.some((row) => row.times.length > 0));
 }
 
 /** Toutes les heures d'une ligne à un arrêt, pour le jour calendaire demandé. */
