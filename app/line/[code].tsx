@@ -7,9 +7,14 @@ import { LineChip } from "@/components/LineChip";
 import { NavBar, useNavBarInset } from "@/components/NavBar";
 import { Badge, Button, EmptyState, SectionLabel, SkeletonRows } from "@/components/ui";
 import { useLineDisruptions } from "@/src/hooks/useDisruptionCounts";
-import { stopsOnLine } from "@/src/lines/groupLines";
+import { partitionStopsOnLine } from "@/src/lines/groupLines";
 import { loadPreparedLineOrder, loadPreparedTimetable } from "@/src/schedule/prepared";
-import { lineDayBoard, type LineDayBoard } from "@/src/schedule/timetable";
+import {
+  lineDayBoard,
+  lineDirectionStopBoards,
+  type LineDayBoard,
+  type LineDirectionStopBoard,
+} from "@/src/schedule/timetable";
 import { getLineName, loadLineNames } from "@/src/schedule/theoretical";
 import { oppositePlatforms } from "@/src/stops/siblings";
 import { useStops } from "@/src/stops/StopsProvider";
@@ -28,12 +33,12 @@ export default function LineScreen() {
   const navInset = useNavBarInset();
   const [passageOrder, setPassageOrder] = useState<number[] | undefined>(undefined);
   const [lightboxStop, setLightboxStop] = useState<Stop | null>(null);
-  const lineStops = useMemo(() => {
-    if (passageOrder === undefined) {
-      return [];
-    }
-    return stopsOnLine(stops, code, passageOrder);
-  }, [code, passageOrder, stops]);
+  const orderReady = passageOrder !== undefined;
+  const { mainStops, extraStops } = useMemo(
+    () => partitionStopsOnLine(stops, code, orderReady ? passageOrder : undefined),
+    [code, orderReady, passageOrder, stops],
+  );
+  const lineStops = useMemo(() => [...mainStops, ...extraStops], [extraStops, mainStops]);
   const { disruptions, loading: disruptionsLoading } = useLineDisruptions(code);
 
   useEffect(() => {
@@ -121,30 +126,54 @@ export default function LineScreen() {
                 </View>
               ) : null}
             </View>
-            {passageOrder === undefined ? (
+            {lineStops.length > 0 ? (
+              <LineDayTimetableSection code={code} color={color} lineStops={lineStops} stops={stops} />
+            ) : null}
+            {!orderReady && stops.length === 0 ? (
               <View style={styles.pending}>
                 <Text style={styles.hint}>Chargement de la ligne…</Text>
                 <SkeletonRows count={3} />
               </View>
             ) : lineStops.length > 0 ? (
               <View>
-                <SectionLabel>Arrêts · ordre de passage</SectionLabel>
+                <SectionLabel>
+                  {orderReady ? "Arrêts · ordre de passage" : "Arrêts · ordre de passage (chargement…)"}
+                </SectionLabel>
                 <Text style={styles.listHint}>Appuyez sur un arrêt pour voir les horaires du jour.</Text>
+                {extraStops.length > 0 ? (
+                  <Text style={styles.listHint}>
+                    {extraStops.length} arrêt{extraStops.length > 1 ? "s" : ""} dessert{extraStops.length > 1 ? "ent" : ""} la ligne
+                    hors tracé principal (embranchements, terminus courts…).
+                  </Text>
+                ) : null}
               </View>
             ) : null}
           </View>
         }
         ListEmptyComponent={<EmptyState icon="empty" title="Aucun arrêt pour cette ligne" />}
-        renderItem={({ item, index }) => (
-          <LineStopRow
-            stop={item}
-            code={code}
-            color={color}
-            first={index === 0}
-            last={index === lineStops.length - 1}
-            onPress={() => setLightboxStop(item)}
-          />
-        )}
+        renderItem={({ item, index }) => {
+          const extraStart = mainStops.length;
+          const first = index === 0 || index === extraStart;
+          const last = index === lineStops.length - 1;
+          const showExtraLabel = index === extraStart && extraStops.length > 0;
+          return (
+            <View>
+              {showExtraLabel ? (
+                <View style={styles.extraHeader}>
+                  <SectionLabel>Autres arrêts sur la ligne</SectionLabel>
+                </View>
+              ) : null}
+              <LineStopRow
+                stop={item}
+                code={code}
+                color={color}
+                first={first}
+                last={last}
+                onPress={() => setLightboxStop(item)}
+              />
+            </View>
+          );
+        }}
       />
       <StopScheduleLightbox
         visible={lightboxStop != null}
@@ -159,6 +188,182 @@ export default function LineScreen() {
         }}
       />
       <NavBar />
+    </View>
+  );
+}
+
+const STOP_COL_WIDTH = 128;
+const TIME_CELL_WIDTH = 54;
+const TIME_ROW_HEIGHT = 44;
+
+function LineDayTimetableSection({
+  code,
+  color,
+  lineStops,
+  stops,
+}: {
+  code: string;
+  color: string;
+  lineStops: Stop[];
+  stops: Stop[];
+}) {
+  const styles = useGridStyles();
+  const t = useTheme();
+  const [summary, setSummary] = useState<LineDayBoard[] | null>(null);
+  const [grids, setGrids] = useState<LineDirectionStopBoard[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const stopNames = useMemo(() => new Map(lineStops.map((stop) => [stop.id, stop.name])), [lineStops]);
+  const nowLabel = useMemo(
+    () => new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+    [summary, grids],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setSummary(null);
+    setGrids(null);
+    setError(null);
+    const platformIds = (stop: Stop) => [stop.id, ...oppositePlatforms(stop, stops).map((platform) => platform.id)];
+    const allIds = [...new Set(lineStops.flatMap((stop) => platformIds(stop)))];
+    void loadPreparedTimetable()
+      .then((table) => {
+        if (cancelled) {
+          return;
+        }
+        const day = new Date();
+        setSummary(lineDayBoard(table, allIds, code, day));
+        setGrids(
+          lineDirectionStopBoards(table, lineStops, (stopId) => {
+            const stop = lineStops.find((item) => item.id === stopId);
+            return stop ? platformIds(stop) : [stopId];
+          }, code, day),
+        );
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "Horaires indisponibles.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, lineStops, stops]);
+
+  if (error) {
+    return (
+      <View style={styles.section}>
+        <SectionLabel>Horaires du jour</SectionLabel>
+        <Text style={styles.muted}>{error}</Text>
+      </View>
+    );
+  }
+
+  if (summary === null || grids === null) {
+    return (
+      <View style={styles.section}>
+        <SectionLabel>Horaires du jour</SectionLabel>
+        <SkeletonRows count={4} />
+      </View>
+    );
+  }
+
+  if (summary.length === 0 && grids.length === 0) {
+    return (
+      <View style={styles.section}>
+        <SectionLabel>Horaires du jour</SectionLabel>
+        <Text style={styles.muted}>Aucun passage prévu aujourd'hui sur cette ligne.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.section}>
+      <SectionLabel>Horaires du jour</SectionLabel>
+      <Text style={styles.hint}>Faites défiler horizontalement pour parcourir toutes les heures.</Text>
+      {summary.map((group) => {
+        const nextIndex = group.times.findIndex((time) => time >= nowLabel);
+        return (
+          <View key={`sum-${group.direction}`} style={styles.summaryBlock}>
+            <Text style={styles.directionTitle} numberOfLines={2}>
+              vers {group.direction}
+            </Text>
+            <View style={styles.summaryTimes}>
+              {group.times.map((time, index) => (
+                <Text
+                  key={`${group.direction}-${time}-${index}`}
+                  style={[styles.summaryTime, index === nextIndex && styles.timeNext]}
+                >
+                  {time}
+                </Text>
+              ))}
+            </View>
+          </View>
+        );
+      })}
+      {grids.map((board) => (
+        <View key={board.direction} style={styles.gridBlock}>
+          <Text style={styles.directionTitle} numberOfLines={2}>
+            Tableau · vers {board.direction}
+          </Text>
+          <View style={[styles.gridShell, t.elevation]}>
+            <View style={[styles.gridHead, { borderLeftColor: color }]}>
+              <View style={[styles.stopHeadCell, { width: STOP_COL_WIDTH }]}>
+                <Text style={styles.headLabel}>Arrêt</Text>
+              </View>
+              <Text style={styles.headScrollHint}>Heures →</Text>
+            </View>
+            <View style={styles.gridBody}>
+              <View style={{ width: STOP_COL_WIDTH }}>
+                {board.rows.map((row, index) => (
+                  <View
+                    key={row.stopId}
+                    style={[
+                      styles.stopCell,
+                      index < board.rows.length - 1 && styles.gridRowDivider,
+                      { height: TIME_ROW_HEIGHT },
+                    ]}
+                  >
+                    <Text style={styles.stopCellName} numberOfLines={2}>
+                      {stopNames.get(row.stopId) ?? `Arrêt ${row.stopId}`}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                showsHorizontalScrollIndicator
+                contentContainerStyle={styles.timesScrollContent}
+              >
+                <View>
+                  {board.rows.map((row, rowIndex) => {
+                    const nextIndex = row.times.findIndex((time) => time >= nowLabel);
+                    return (
+                      <View
+                        key={row.stopId}
+                        style={[
+                          styles.timeRow,
+                          rowIndex < board.rows.length - 1 && styles.gridRowDivider,
+                        ]}
+                      >
+                        {row.times.length === 0 ? (
+                          <Text style={styles.emptyCell}>—</Text>
+                        ) : (
+                          row.times.map((time, index) => (
+                            <View key={`${row.stopId}-${time}-${index}`} style={styles.timeCell}>
+                              <Text style={[styles.timeText, index === nextIndex && styles.timeNext]}>{time}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </View>
+      ))}
     </View>
   );
 }
@@ -338,6 +543,131 @@ function LineStopRow({
     </Pressable>
   );
 }
+
+const useGridStyles = makeStyles((t) => ({
+  section: {
+    marginTop: t.space.lg,
+    gap: t.space.sm,
+  },
+  hint: {
+    ...t.type.caption,
+    color: t.colors.muted,
+    marginBottom: t.space.xs,
+  },
+  muted: {
+    ...t.type.caption,
+    color: t.colors.muted,
+  },
+  summaryBlock: {
+    gap: t.space.xs,
+    marginBottom: t.space.sm,
+  },
+  directionTitle: {
+    ...t.type.callout,
+    fontWeight: "800",
+    color: t.colors.ink,
+  },
+  summaryTimes: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  summaryTime: {
+    ...t.type.time,
+    color: t.colors.ink,
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: t.radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  gridBlock: {
+    gap: t.space.sm,
+    marginTop: t.space.md,
+  },
+  gridShell: {
+    backgroundColor: t.colors.surface,
+    borderRadius: t.radius.lg,
+    overflow: "hidden",
+    borderWidth: t.scheme === "dark" ? 1 : 0,
+    borderColor: t.colors.border,
+  },
+  gridHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderLeftWidth: 4,
+    paddingHorizontal: t.space.sm,
+    paddingVertical: t.space.sm,
+    backgroundColor: t.colors.surfaceMuted,
+    gap: t.space.sm,
+  },
+  stopHeadCell: {
+    justifyContent: "center",
+  },
+  headLabel: {
+    ...t.type.caption,
+    fontWeight: "800",
+    color: t.colors.ink,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  headScrollHint: {
+    ...t.type.caption,
+    color: t.colors.muted,
+    flex: 1,
+  },
+  gridBody: {
+    flexDirection: "row",
+  },
+  stopCell: {
+    width: STOP_COL_WIDTH,
+    paddingHorizontal: t.space.sm,
+    justifyContent: "center",
+    backgroundColor: t.colors.surface,
+  },
+  stopCellName: {
+    ...t.type.caption,
+    fontWeight: "700",
+    color: t.colors.ink,
+    fontSize: 12,
+    lineHeight: 15,
+  },
+  timesScrollContent: {
+    paddingRight: t.space.md,
+  },
+  timeRow: {
+    flexDirection: "row",
+    height: 44,
+    alignItems: "center",
+  },
+  timeCell: {
+    width: TIME_CELL_WIDTH,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timeText: {
+    ...t.type.time,
+    fontSize: 13,
+    color: t.colors.ink,
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: t.radius.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 5,
+    overflow: "hidden",
+  },
+  timeNext: {
+    backgroundColor: t.colors.accent,
+    color: t.colors.accentInk,
+  },
+  emptyCell: {
+    ...t.type.caption,
+    color: t.colors.muted,
+    paddingHorizontal: t.space.sm,
+  },
+  gridRowDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: t.colors.border,
+  },
+}));
 
 const useLightboxStyles = makeStyles((t) => ({
   overlay: {
@@ -519,6 +849,10 @@ const useStyles = makeStyles((t) => ({
     ...t.type.caption,
     color: t.colors.muted,
     marginBottom: t.space.sm,
+  },
+  extraHeader: {
+    marginTop: t.space.md,
+    marginBottom: t.space.xs,
   },
   rowAction: {
     flexDirection: "row",

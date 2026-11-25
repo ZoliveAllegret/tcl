@@ -74,7 +74,46 @@ export function sectionLines(
     .filter((section) => section.data.length > 0);
 }
 
-/** Ordre GTFS des arrêts le long de la ligne (trajet le plus long). */
+export type LineStopsPartition = {
+  mainStops: Stop[];
+  extraStops: Stop[];
+};
+
+/** Tous les arrêts de la ligne : tracé principal (GTFS) puis dessertes hors tracé. */
+export function partitionStopsOnLine(
+  stops: Stop[],
+  code: string,
+  passageOrder?: number[],
+): LineStopsPartition {
+  const ordered = stopsOnLine(stops, code, passageOrder);
+  if (!passageOrder || passageOrder.length === 0) {
+    return { mainStops: ordered, extraStops: [] };
+  }
+  const lineStops = stops.filter((stop) => stop.lines.includes(code));
+  const rank = new Map<number, number>();
+  for (let index = 0; index < passageOrder.length; index += 1) {
+    const stopId = passageOrder[index];
+    if (stopId != null && !rank.has(stopId)) {
+      rank.set(stopId, index);
+    }
+  }
+  const onRoute = (stop: Stop): boolean => {
+    const platformIds = [stop.id, ...oppositePlatforms(stop, lineStops).map((platform) => platform.id)];
+    return platformIds.some((id) => rank.has(id));
+  };
+  const mainStops: Stop[] = [];
+  const extraStops: Stop[] = [];
+  for (const stop of ordered) {
+    if (onRoute(stop)) {
+      mainStops.push(stop);
+    } else {
+      extraStops.push(stop);
+    }
+  }
+  return { mainStops, extraStops };
+}
+
+/** Ordre GTFS des arrêts le long de la ligne (trajet le plus long + embranchements fusionnés). */
 export function stopsOnLine(stops: Stop[], code: string, passageOrder?: number[]): Stop[] {
   const lineStops = stops.filter((stop) => stop.lines.includes(code));
   const stations = stationsOf(lineStops);

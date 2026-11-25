@@ -1,4 +1,11 @@
-import { decodeTimetable, departuresFromTimetable, encodeTimetable, lineDayBoard, type PreparedTimetable } from "../src/schedule/timetable";
+import {
+  decodeTimetable,
+  departuresFromTimetable,
+  encodeTimetable,
+  lineDayBoard,
+  lineDirectionStopBoards,
+  type PreparedTimetable,
+} from "../src/schedule/timetable";
 
 function table(partial: Partial<PreparedTimetable> = {}): PreparedTimetable {
   return {
@@ -82,6 +89,29 @@ describe("horaires préparés", () => {
     expect(lineDayBoard(source, [10, 11], "69", wednesday)).toEqual([
       { direction: "Montluc", times: [clock(8, 0), clock(22, 0)] },
       { direction: "Part-Dieu", times: [clock(8, 15)] },
+    ]);
+  });
+
+  it("donne un tableau d'horaires par arrêt et par sens", () => {
+    const clock = (hour: number, minute: number) =>
+      new Date(2026, 8, 30, hour, minute).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    const source = table({
+      lines: ["69"],
+      directions: ["Montluc", "Part-Dieu"],
+      byStop: new Map([
+        [10, [{ line: 0, direction: 0, service: 0, minutes: [8 * 60, 22 * 60] }]],
+        [20, [{ line: 0, direction: 0, service: 0, minutes: [8 * 60 + 5, 22 * 60 + 5] }]],
+      ]),
+    });
+    const boards = lineDirectionStopBoards(source, [{ id: 10 }, { id: 20 }], (id) => [id], "69", wednesday);
+    expect(boards).toEqual([
+      {
+        direction: "Montluc",
+        rows: [
+          { stopId: 10, times: [clock(8, 0), clock(22, 0)] },
+          { stopId: 20, times: [clock(8, 5), clock(22, 5)] },
+        ],
+      },
     ]);
   });
 

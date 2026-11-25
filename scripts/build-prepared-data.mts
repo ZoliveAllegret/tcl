@@ -374,7 +374,7 @@ async function buildLineOrder(entries: Map<string, Uint8Array>): Promise<Record<
     byTrip.set(tripId!, rows);
   });
 
-  const best = new Map<string, number[]>();
+  const tripsByLine = new Map<string, number[][]>();
   for (const [tripId, line] of tripLine) {
     const ordered = (byTrip.get(tripId) ?? []).sort((left, right) => left.seq - right.seq).map((row) => row.stopId);
     const stops: number[] = [];
@@ -383,10 +383,28 @@ async function buildLineOrder(entries: Map<string, Uint8Array>): Promise<Record<
         stops.push(stopId);
       }
     }
-    const previous = best.get(line);
-    if (!previous || stops.length > previous.length) {
-      best.set(line, stops);
+    if (stops.length === 0) {
+      continue;
     }
+    const trips = tripsByLine.get(line) ?? [];
+    trips.push(stops);
+    tripsByLine.set(line, trips);
+  }
+
+  const best = new Map<string, number[]>();
+  for (const [line, trips] of tripsByLine) {
+    trips.sort((left, right) => right.length - left.length);
+    const merged: number[] = [];
+    const seen = new Set<number>();
+    for (const trip of trips) {
+      for (const stopId of trip) {
+        if (!seen.has(stopId)) {
+          seen.add(stopId);
+          merged.push(stopId);
+        }
+      }
+    }
+    best.set(line, merged);
   }
   console.log(`Ordre de passage ${best.size} lignes`);
   return Object.fromEntries(best);
