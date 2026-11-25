@@ -194,9 +194,18 @@ export default function LineScreen() {
   );
 }
 
-const STOP_COL_WIDTH = 128;
 const TIME_CELL_WIDTH = 54;
-const TIME_ROW_HEIGHT = 44;
+
+function stopScheduleKey(direction: string, stopId: number): string {
+  return `${direction}:${stopId}`;
+}
+
+function nextDepartureLabel(times: string[], nowLabel: string): string | null {
+  if (times.length === 0) {
+    return null;
+  }
+  return times.find((time) => time >= nowLabel) ?? times[times.length - 1] ?? null;
+}
 
 function LineDayTimetableSection({
   code,
@@ -213,6 +222,8 @@ function LineDayTimetableSection({
   const t = useTheme();
   const [grids, setGrids] = useState<LineDirectionStopBoard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expandedDirections, setExpandedDirections] = useState<Set<string>>(() => new Set());
+  const [expandedStops, setExpandedStops] = useState<Set<string>>(() => new Set());
   const stopNames = useMemo(() => new Map(lineStops.map((stop) => [stop.id, stop.name])), [lineStops]);
   const nowLabel = useMemo(
     () => new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
@@ -223,6 +234,8 @@ function LineDayTimetableSection({
     let cancelled = false;
     setGrids(null);
     setError(null);
+    setExpandedDirections(new Set());
+    setExpandedStops(new Set());
     const platformIds = (stop: Stop) => [stop.id, ...oppositePlatforms(stop, stops).map((platform) => platform.id)];
     void loadPreparedTimetable()
       .then((table) => {
@@ -274,76 +287,131 @@ function LineDayTimetableSection({
     );
   }
 
+  const toggleDirection = (direction: string) => {
+    setExpandedDirections((prev) => {
+      const next = new Set(prev);
+      if (next.has(direction)) {
+        next.delete(direction);
+      } else {
+        next.add(direction);
+      }
+      return next;
+    });
+  };
+
+  const toggleStop = (direction: string, stopId: number) => {
+    const key = stopScheduleKey(direction, stopId);
+    setExpandedStops((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
   return (
     <View style={styles.section}>
       <SectionLabel>Horaires du jour</SectionLabel>
-      <Text style={styles.hint}>
-        Un départ par case, arrêt par arrêt. Faites défiler horizontalement pour voir toutes les heures.
-      </Text>
-      {grids.map((board) => (
-        <View key={board.direction} style={styles.gridBlock}>
-          <Text style={styles.directionTitle} numberOfLines={2}>
-            Tableau · vers {board.direction}
-          </Text>
-          <View style={[styles.gridShell, t.elevation]}>
-            <View style={[styles.gridHead, { borderLeftColor: color }]}>
-              <View style={[styles.stopHeadCell, { width: STOP_COL_WIDTH }]}>
-                <Text style={styles.headLabel}>Arrêt</Text>
+      <Text style={styles.hint}>Touchez un sens, puis un arrêt, pour déplier les heures. Défilement horizontal une fois ouvert.</Text>
+      {grids.map((board) => {
+        const directionOpen = expandedDirections.has(board.direction);
+        const activeRows = board.rows.filter((row) => row.times.length > 0);
+        return (
+          <View key={board.direction} style={styles.gridBlock}>
+            <Pressable
+              onPress={() => toggleDirection(board.direction)}
+              style={({ pressed }) => [
+                styles.directionHead,
+                { borderLeftColor: color },
+                t.elevation,
+                pressed && styles.pressedHead,
+              ]}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: directionOpen }}
+              accessibilityLabel={`Horaires vers ${board.direction}`}
+            >
+              <View style={styles.directionCopy}>
+                <Text style={styles.directionTitle} numberOfLines={2}>
+                  vers {board.direction}
+                </Text>
+                <Text style={styles.directionMeta}>
+                  {activeRows.length} arrêt{activeRows.length > 1 ? "s" : ""} avec départs
+                </Text>
               </View>
-              <Text style={styles.headScrollHint}>Heures →</Text>
-            </View>
-            <View style={styles.gridBody}>
-              <View style={{ width: STOP_COL_WIDTH }}>
-                {board.rows.map((row, index) => (
-                  <View
-                    key={row.stopId}
-                    style={[
-                      styles.stopCell,
-                      index < board.rows.length - 1 && styles.gridRowDivider,
-                      { height: TIME_ROW_HEIGHT },
-                    ]}
-                  >
-                    <Text style={styles.stopCellName} numberOfLines={2}>
-                      {stopNames.get(row.stopId) ?? `Arrêt ${row.stopId}`}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-              <ScrollView
-                horizontal
-                nestedScrollEnabled
-                showsHorizontalScrollIndicator
-                contentContainerStyle={styles.timesScrollContent}
-              >
-                <View>
-                  {board.rows.map((row, rowIndex) => {
+              <Icon
+                name="chevron"
+                color={t.colors.muted}
+                size={20}
+                style={directionOpen ? styles.chevronOpen : undefined}
+              />
+            </Pressable>
+            {directionOpen ? (
+              <View style={[styles.directionBody, t.elevation]}>
+                {activeRows.length === 0 ? (
+                  <Text style={styles.muted}>Aucun départ aujourd'hui.</Text>
+                ) : (
+                  activeRows.map((row, index) => {
+                    const stopKey = stopScheduleKey(board.direction, row.stopId);
+                    const stopOpen = expandedStops.has(stopKey);
+                    const stopName = stopNames.get(row.stopId) ?? `Arrêt ${row.stopId}`;
+                    const nextDeparture = nextDepartureLabel(row.times, nowLabel);
                     const nextIndex = row.times.findIndex((time) => time >= nowLabel);
                     return (
-                      <View
-                        key={row.stopId}
-                        style={[
-                          styles.timeRow,
-                          rowIndex < board.rows.length - 1 && styles.gridRowDivider,
-                        ]}
-                      >
-                        {row.times.length === 0 ? (
-                          <Text style={styles.emptyCell}>—</Text>
-                        ) : (
-                          row.times.map((time, index) => (
-                            <View key={`${row.stopId}-${time}-${index}`} style={styles.timeCell}>
-                              <Text style={[styles.timeText, index === nextIndex && styles.timeNext]}>{time}</Text>
+                      <View key={row.stopId} style={index < activeRows.length - 1 ? styles.stopDivider : undefined}>
+                        <Pressable
+                          onPress={() => toggleStop(board.direction, row.stopId)}
+                          style={({ pressed }) => [styles.stopHead, pressed && styles.pressedHead]}
+                          accessibilityRole="button"
+                          accessibilityState={{ expanded: stopOpen }}
+                          accessibilityLabel={`Horaires à ${stopName}`}
+                        >
+                          <View style={styles.stopHeadCopy}>
+                            <Text style={styles.stopHeadName} numberOfLines={2}>
+                              {stopName}
+                            </Text>
+                            <Text style={styles.stopHeadMeta}>
+                              {stopOpen
+                                ? `${row.times.length} départ${row.times.length > 1 ? "s" : ""}`
+                                : nextDeparture
+                                  ? `Prochain ${nextDeparture} · ${row.times.length} départ${row.times.length > 1 ? "s" : ""}`
+                                  : "Sans départ"}
+                            </Text>
+                          </View>
+                          <Icon
+                            name="chevron"
+                            color={t.colors.muted}
+                            size={18}
+                            style={stopOpen ? styles.chevronOpen : undefined}
+                          />
+                        </Pressable>
+                        {stopOpen ? (
+                          <ScrollView
+                            horizontal
+                            nestedScrollEnabled
+                            showsHorizontalScrollIndicator
+                            contentContainerStyle={styles.timesScrollContent}
+                          >
+                            <View style={styles.timeRow}>
+                              {row.times.map((time, timeIndex) => (
+                                <View key={`${row.stopId}-${time}-${timeIndex}`} style={styles.timeCell}>
+                                  <Text style={[styles.timeText, timeIndex === nextIndex && styles.timeNext]}>{time}</Text>
+                                </View>
+                              ))}
                             </View>
-                          ))
-                        )}
+                          </ScrollView>
+                        ) : null}
                       </View>
                     );
-                  })}
-                </View>
-              </ScrollView>
-            </View>
+                  })
+                )}
+              </View>
+            ) : null}
           </View>
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -544,63 +612,75 @@ const useGridStyles = makeStyles((t) => ({
     color: t.colors.ink,
   },
   gridBlock: {
-    gap: t.space.sm,
+    gap: t.space.xs,
     marginTop: t.space.md,
   },
-  gridShell: {
+  directionHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: t.space.sm,
     backgroundColor: t.colors.surface,
     borderRadius: t.radius.lg,
-    overflow: "hidden",
+    borderLeftWidth: 4,
+    padding: t.space.md,
     borderWidth: t.scheme === "dark" ? 1 : 0,
     borderColor: t.colors.border,
   },
-  gridHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderLeftWidth: 4,
-    paddingHorizontal: t.space.sm,
-    paddingVertical: t.space.sm,
-    backgroundColor: t.colors.surfaceMuted,
-    gap: t.space.sm,
+  directionCopy: {
+    flex: 1,
+    gap: 2,
   },
-  stopHeadCell: {
-    justifyContent: "center",
-  },
-  headLabel: {
-    ...t.type.caption,
-    fontWeight: "800",
-    color: t.colors.ink,
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-  },
-  headScrollHint: {
+  directionMeta: {
     ...t.type.caption,
     color: t.colors.muted,
-    flex: 1,
   },
-  gridBody: {
-    flexDirection: "row",
-  },
-  stopCell: {
-    width: STOP_COL_WIDTH,
-    paddingHorizontal: t.space.sm,
-    justifyContent: "center",
+  directionBody: {
+    marginTop: t.space.xs,
     backgroundColor: t.colors.surface,
+    borderRadius: t.radius.lg,
+    borderWidth: t.scheme === "dark" ? 1 : 0,
+    borderColor: t.colors.border,
+    overflow: "hidden",
+    paddingBottom: t.space.xs,
   },
-  stopCellName: {
-    ...t.type.caption,
-    fontWeight: "700",
+  stopDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: t.colors.border,
+  },
+  stopHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: t.space.sm,
+    paddingHorizontal: t.space.md,
+    paddingVertical: t.space.sm,
+  },
+  stopHeadCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  stopHeadName: {
+    ...t.type.bodyStrong,
+    fontSize: 14,
     color: t.colors.ink,
-    fontSize: 12,
-    lineHeight: 15,
+  },
+  stopHeadMeta: {
+    ...t.type.caption,
+    color: t.colors.muted,
+  },
+  pressedHead: {
+    backgroundColor: t.colors.surfacePressed,
+  },
+  chevronOpen: {
+    transform: [{ rotate: "90deg" }],
   },
   timesScrollContent: {
-    paddingRight: t.space.md,
+    paddingHorizontal: t.space.md,
+    paddingBottom: t.space.sm,
   },
   timeRow: {
     flexDirection: "row",
-    height: 44,
     alignItems: "center",
+    gap: 4,
   },
   timeCell: {
     width: TIME_CELL_WIDTH,
@@ -620,15 +700,6 @@ const useGridStyles = makeStyles((t) => ({
   timeNext: {
     backgroundColor: t.colors.accent,
     color: t.colors.accentInk,
-  },
-  emptyCell: {
-    ...t.type.caption,
-    color: t.colors.muted,
-    paddingHorizontal: t.space.sm,
-  },
-  gridRowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: t.colors.border,
   },
 }));
 
