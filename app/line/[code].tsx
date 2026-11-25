@@ -1,6 +1,6 @@
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { FlatList, Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Icon } from "@/components/Icon";
 import { LineChip } from "@/components/LineChip";
@@ -33,6 +33,8 @@ export default function LineScreen() {
   const navInset = useNavBarInset();
   const [passageOrder, setPassageOrder] = useState<number[] | undefined>(undefined);
   const [lightboxStop, setLightboxStop] = useState<Stop | null>(null);
+  const [mainPassageOpen, setMainPassageOpen] = useState(false);
+  const [extraPassageOpen, setExtraPassageOpen] = useState(false);
   const orderReady = passageOrder !== undefined;
   const { mainStops, extraStops } = useMemo(
     () => partitionStopsOnLine(stops, code, orderReady ? passageOrder : undefined),
@@ -45,6 +47,8 @@ export default function LineScreen() {
     let cancelled = false;
     setPassageOrder(undefined);
     setLightboxStop(null);
+    setMainPassageOpen(false);
+    setExtraPassageOpen(false);
     void loadPreparedLineOrder()
       .then((order) => {
         if (!cancelled) {
@@ -83,100 +87,76 @@ export default function LineScreen() {
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ title: code ? `Ligne ${code}` : "Ligne" }} />
-      <FlatList
-        data={lineStops}
-        keyExtractor={(stop) => String(stop.id)}
-        contentContainerStyle={[styles.list, { paddingBottom: navInset }]}
-        ListHeaderComponent={
-          <View>
-            <View style={[styles.hero, t.elevation]}>
-              <View style={[styles.band, { backgroundColor: color }]} />
-              <View style={styles.heroChip}>
-                <LineChip line={code} size="lg" />
-              </View>
-              <Text style={styles.name}>{label ?? `Ligne ${code}`}</Text>
-              <View style={styles.badges}>
-                <Badge icon={mode}>{MODE_LABEL[mode]}</Badge>
-                <Badge>
-                  {lineStops.length} {lineStops.length > 1 ? "arrêts" : "arrêt"}
-                </Badge>
-              </View>
-              <Button
-                icon="map"
-                label="Voir le tracé"
-                onPress={() => router.push({ pathname: "/map", params: { trace: code } })}
-              />
-              {disruptionsLoading ? (
-                <Text style={styles.disruptionPending}>Chargement des perturbations…</Text>
-              ) : disruptions.length > 0 ? (
-                <View style={styles.disruptions}>
-                  <Text style={styles.disruptionTitle}>
-                    {disruptions.length > 1
-                      ? `${disruptions.length} perturbations`
-                      : "1 perturbation"}
-                  </Text>
-                  {disruptions.map((disruption) => (
-                    <View key={disruption.id} style={styles.disruption}>
-                      <Text style={styles.disruptionMessage}>{disruption.message}</Text>
-                      {disruption.until ? (
-                        <Text style={styles.disruptionUntil}>Jusqu'au {disruption.until}</Text>
-                      ) : null}
-                    </View>
-                  ))}
-                </View>
-              ) : null}
-            </View>
-            {!orderReady && stops.length === 0 ? (
-              <View style={styles.pending}>
-                <Text style={styles.hint}>Chargement de la ligne…</Text>
-                <SkeletonRows count={3} />
-              </View>
-            ) : lineStops.length > 0 ? (
-              <View>
-                <SectionLabel>
-                  {orderReady ? "Arrêts · ordre de passage" : "Arrêts · ordre de passage (chargement…)"}
-                </SectionLabel>
-                <Text style={styles.listHint}>Appuyez sur un arrêt pour voir les horaires du jour.</Text>
-                {extraStops.length > 0 ? (
-                  <Text style={styles.listHint}>
-                    {extraStops.length} arrêt{extraStops.length > 1 ? "s" : ""} dessert{extraStops.length > 1 ? "ent" : ""} la ligne
-                    hors tracé principal (embranchements, terminus courts…).
-                  </Text>
-                ) : null}
-              </View>
-            ) : null}
+      <ScrollView contentContainerStyle={[styles.list, { paddingBottom: navInset }]}>
+        <View style={[styles.hero, t.elevation]}>
+          <View style={[styles.band, { backgroundColor: color }]} />
+          <View style={styles.heroChip}>
+            <LineChip line={code} size="lg" />
           </View>
-        }
-        ListEmptyComponent={<EmptyState icon="empty" title="Aucun arrêt pour cette ligne" />}
-        ListFooterComponent={
-          lineStops.length > 0 ? (
-            <LineDayTimetableSection code={code} color={color} lineStops={lineStops} stops={stops} />
-          ) : null
-        }
-        renderItem={({ item, index }) => {
-          const extraStart = mainStops.length;
-          const first = index === 0 || index === extraStart;
-          const last = index === lineStops.length - 1;
-          const showExtraLabel = index === extraStart && extraStops.length > 0;
-          return (
-            <View>
-              {showExtraLabel ? (
-                <View style={styles.extraHeader}>
-                  <SectionLabel>Autres arrêts sur la ligne</SectionLabel>
+          <Text style={styles.name}>{label ?? `Ligne ${code}`}</Text>
+          <View style={styles.badges}>
+            <Badge icon={mode}>{MODE_LABEL[mode]}</Badge>
+            <Badge>
+              {lineStops.length} {lineStops.length > 1 ? "arrêts" : "arrêt"}
+            </Badge>
+          </View>
+          <Button
+            icon="map"
+            label="Voir le tracé"
+            onPress={() => router.push({ pathname: "/map", params: { trace: code } })}
+          />
+          {disruptionsLoading ? (
+            <Text style={styles.disruptionPending}>Chargement des perturbations…</Text>
+          ) : disruptions.length > 0 ? (
+            <View style={styles.disruptions}>
+              <Text style={styles.disruptionTitle}>
+                {disruptions.length > 1 ? `${disruptions.length} perturbations` : "1 perturbation"}
+              </Text>
+              {disruptions.map((disruption) => (
+                <View key={disruption.id} style={styles.disruption}>
+                  <Text style={styles.disruptionMessage}>{disruption.message}</Text>
+                  {disruption.until ? <Text style={styles.disruptionUntil}>Jusqu'au {disruption.until}</Text> : null}
                 </View>
-              ) : null}
-              <LineStopRow
-                stop={item}
-                code={code}
-                color={color}
-                first={first}
-                last={last}
-                onPress={() => setLightboxStop(item)}
-              />
+              ))}
             </View>
-          );
-        }}
-      />
+          ) : null}
+        </View>
+        {!orderReady && stops.length === 0 ? (
+          <View style={styles.pending}>
+            <Text style={styles.hint}>Chargement de la ligne…</Text>
+            <SkeletonRows count={3} />
+          </View>
+        ) : null}
+        {orderReady && lineStops.length === 0 ? <EmptyState icon="empty" title="Aucun arrêt pour cette ligne" /> : null}
+        {mainStops.length > 0 ? (
+          <LinePassageStopsPanel
+            title={orderReady ? "Arrêts · ordre de passage" : "Arrêts · ordre de passage (chargement…)"}
+            meta={`${mainStops.length} arrêt${mainStops.length > 1 ? "s" : ""} sur le tracé principal`}
+            hint="Appuyez sur un arrêt pour voir les horaires du jour."
+            color={color}
+            code={code}
+            stops={mainStops}
+            open={mainPassageOpen}
+            onToggle={() => setMainPassageOpen((value) => !value)}
+            onStopPress={setLightboxStop}
+          />
+        ) : null}
+        {extraStops.length > 0 ? (
+          <LinePassageStopsPanel
+            title="Autres arrêts sur la ligne"
+            meta={`${extraStops.length} arrêt${extraStops.length > 1 ? "s" : ""} · embranchements, terminus courts…`}
+            color={color}
+            code={code}
+            stops={extraStops}
+            open={extraPassageOpen}
+            onToggle={() => setExtraPassageOpen((value) => !value)}
+            onStopPress={setLightboxStop}
+          />
+        ) : null}
+        {lineStops.length > 0 ? (
+          <LineDayTimetableSection code={code} color={color} lineStops={lineStops} stops={stops} />
+        ) : null}
+      </ScrollView>
       <StopScheduleLightbox
         visible={lightboxStop != null}
         stop={lightboxStop}
@@ -195,6 +175,65 @@ export default function LineScreen() {
 }
 
 const TIME_CELL_WIDTH = 54;
+
+function LinePassageStopsPanel({
+  title,
+  meta,
+  hint,
+  color,
+  code,
+  stops,
+  open,
+  onToggle,
+  onStopPress,
+}: {
+  title: string;
+  meta: string;
+  hint?: string;
+  color: string;
+  code: string;
+  stops: Stop[];
+  open: boolean;
+  onToggle: () => void;
+  onStopPress: (stop: Stop) => void;
+}) {
+  const grid = useGridStyles();
+  const t = useTheme();
+
+  return (
+    <View style={grid.gridBlock}>
+      <Pressable
+        onPress={onToggle}
+        style={({ pressed }) => [grid.directionHead, { borderLeftColor: color }, t.elevation, pressed && grid.pressedHead]}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={title}
+      >
+        <View style={grid.directionCopy}>
+          <Text style={grid.directionTitle}>{title}</Text>
+          <Text style={grid.directionMeta}>{meta}</Text>
+        </View>
+        <Icon name="chevron" color={t.colors.muted} size={20} style={open ? grid.chevronOpen : undefined} />
+      </Pressable>
+      {open ? (
+        <View style={[grid.directionBody, t.elevation]}>
+          {hint ? <Text style={[grid.hint, { paddingHorizontal: t.space.md, paddingTop: t.space.sm }]}>{hint}</Text> : null}
+          {stops.map((stop, index) => (
+            <LineStopRow
+              key={stop.id}
+              stop={stop}
+              code={code}
+              color={color}
+              first={index === 0}
+              last={index === stops.length - 1}
+              onPress={() => onStopPress(stop)}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
 
 function stopScheduleKey(direction: string, stopId: number): string {
   return `${direction}:${stopId}`;
@@ -878,15 +917,6 @@ const useStyles = makeStyles((t) => ({
   },
   pending: {
     gap: t.space.sm,
-  },
-  listHint: {
-    ...t.type.caption,
-    color: t.colors.muted,
-    marginBottom: t.space.sm,
-  },
-  extraHeader: {
-    marginTop: t.space.md,
-    marginBottom: t.space.xs,
   },
   rowAction: {
     flexDirection: "row",
