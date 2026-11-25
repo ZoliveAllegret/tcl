@@ -79,6 +79,54 @@ export type LineStopsPartition = {
   extraStops: Stop[];
 };
 
+function stopMatchesHeadsign(stopName: string, headsign: string): boolean {
+  const stop = normalizeText(stopName);
+  const goal = normalizeText(headsign);
+  if (!stop || !goal) {
+    return false;
+  }
+  return stop === goal || stop.includes(goal) || goal.includes(stop);
+}
+
+/** Le libellé « vers X » doit lire du départ vers la destination, pas depuis la destination. */
+export function orientPassageOrder(
+  stopIds: number[],
+  headsign: string,
+  stopNameById: Map<number, string>,
+): number[] {
+  if (stopIds.length < 2) {
+    return stopIds;
+  }
+  const first = stopNameById.get(stopIds[0]) ?? "";
+  const last = stopNameById.get(stopIds[stopIds.length - 1]) ?? "";
+  const destinationAtStart = stopMatchesHeadsign(first, headsign);
+  const destinationAtEnd = stopMatchesHeadsign(last, headsign);
+  if (destinationAtStart && !destinationAtEnd) {
+    return [...stopIds].reverse();
+  }
+  return stopIds;
+}
+
+/** Coupe la prolongation au-delà de l'arrêt qui correspond au headsign (ex. fin à St Germain Gare, pas L'Epoux). */
+export function finalizePassageOrder(
+  stopIds: number[],
+  headsign: string,
+  stopNameById: Map<number, string>,
+): number[] {
+  const oriented = orientPassageOrder(stopIds, headsign, stopNameById);
+  let lastDest = -1;
+  for (let index = 0; index < oriented.length; index += 1) {
+    const name = stopNameById.get(oriented[index]) ?? "";
+    if (stopMatchesHeadsign(name, headsign)) {
+      lastDest = index;
+    }
+  }
+  if (lastDest >= 0 && lastDest < oriented.length - 1) {
+    return oriented.slice(0, lastDest + 1);
+  }
+  return oriented;
+}
+
 /** Tous les arrêts de la ligne : tracé principal (GTFS) puis dessertes hors tracé. */
 export function partitionStopsOnLine(
   stops: Stop[],

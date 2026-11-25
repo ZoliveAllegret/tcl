@@ -7,8 +7,12 @@ import { LineChip } from "@/components/LineChip";
 import { NavBar, useNavBarInset } from "@/components/NavBar";
 import { Badge, Button, EmptyState, SectionLabel, SkeletonRows } from "@/components/ui";
 import { useLineDisruptions } from "@/src/hooks/useDisruptionCounts";
-import { partitionStopsOnLine } from "@/src/lines/groupLines";
-import { loadPreparedLineOrder, loadPreparedTimetable } from "@/src/schedule/prepared";
+import { finalizePassageOrder, partitionStopsOnLine, stopsOnLine } from "@/src/lines/groupLines";
+import {
+  loadPreparedLineOrder,
+  loadPreparedLineOrderDirections,
+  loadPreparedTimetable,
+} from "@/src/schedule/prepared";
 import {
   lineDayBoard,
   lineDirectionStopBoards,
@@ -32,32 +36,85 @@ export default function LineScreen() {
   const [named, setNamed] = useState(Boolean(getLineName(code)));
   const navInset = useNavBarInset();
   const [passageOrder, setPassageOrder] = useState<number[] | undefined>(undefined);
+  const [passageByDirection, setPassageByDirection] = useState<
+    Record<string, Record<string, number[]>> | undefined
+  >(undefined);
   const [lightboxStop, setLightboxStop] = useState<Stop | null>(null);
-  const [mainPassageOpen, setMainPassageOpen] = useState(false);
-  const [extraPassageOpen, setExtraPassageOpen] = useState(false);
-  const orderReady = passageOrder !== undefined;
-  const { mainStops, extraStops } = useMemo(
-    () => partitionStopsOnLine(stops, code, orderReady ? passageOrder : undefined),
-    [code, orderReady, passageOrder, stops],
-  );
-  const lineStops = useMemo(() => [...mainStops, ...extraStops], [extraStops, mainStops]);
+  const [expandedPassageDirs, setExpandedPassageDirs] = useState<Set<string>>(() => new Set());
+  const orderReady = passageOrder !== undefined && passageByDirection !== undefined;
+  const stopNameById = useMemo(() => new Map(stops.map((stop) => [stop.id, stop.name])), [stops]);
+  const directionSections = useMemo(() => {
+    const byDir = passageByDirection?.[code];
+    if (!byDir) {
+      return [];
+    }
+    return Object.entries(byDir)
+      .sort(([left], [right]) => left.localeCompare(right, "fr"))
+      .map(([headsign, rawOrder]) => ({
+        headsign,
+        stops: stopsOnLine(
+          stops,
+          code,
+          finalizePassageOrder(rawOrder, headsign, stopNameById),
+        ),
+      }))
+      .filter((section) => section.stops.length > 0);
+  }, [code, passageByDirection, stopNameById, stops]);
+  const { extraStops } = useMemo(() => {
+    if (!orderReady) {
+      return { extraStops: [] as Stop[] };
+    }
+    const union = [
+      ...new Set([
+        ...(passageOrder ?? []),
+        ...Object.values(passageByDirection?.[code] ?? {}).flat(),
+      ]),
+    ];
+    return partitionStopsOnLine(stops, code, union.length > 0 ? union : passageOrder);
+  }, [code, orderReady, passageByDirection, passageOrder, stops]);
+  const lineStops = useMemo(() => {
+  const seen = new Set<number>();
+    const merged: Stop[] = [];
+    for (const section of directionSections) {
+      for (const stop of section.stops) {
+        if (!seen.has(stop.id)) {
+          seen.add(stop.id);
+          merged.push(stop);
+        }
+      }
+    }
+    for (const stop of extraStops) {
+      if (!seen.has(stop.id)) {
+        seen.add(stop.id);
+        merged.push(stop);
+      }
+    }
+    if (merged.length === 0 && orderReady) {
+      return partitionStopsOnLine(stops, code, passageOrder).mainStops.concat(
+        partitionStopsOnLine(stops, code, passageOrder).extraStops,
+      );
+    }
+    return merged;
+  }, [code, directionSections, extraStops, orderReady, passageOrder, stops]);
   const { disruptions, loading: disruptionsLoading } = useLineDisruptions(code);
 
   useEffect(() => {
     let cancelled = false;
     setPassageOrder(undefined);
+    setPassageByDirection(undefined);
     setLightboxStop(null);
-    setMainPassageOpen(false);
-    setExtraPassageOpen(false);
-    void loadPreparedLineOrder()
-      .then((order) => {
+    setExpandedPassageDirs(new Set());
+    void Promise.all([loadPreparedLineOrder(), loadPreparedLineOrderDirections()])
+      .then(([order, byDirection]) => {
         if (!cancelled) {
           setPassageOrder(order[code] ?? []);
+          setPassageByDirection(byDirection);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setPassageOrder([]);
+          setPassageByDirection({});
         }
       });
     return () => {
@@ -128,19 +185,30 @@ export default function LineScreen() {
           </View>
         ) : null}
         {orderReady && lineStops.length === 0 ? <EmptyState icon="empty" title="Aucun arrêt pour cette ligne" /> : null}
-        {mainStops.length > 0 ? (
+        {directionSections.map((section) => (
           <LinePassageStopsPanel
-            title={orderReady ? "Arrêts · ordre de passage" : "Arrêts · ordre de passage (chargement…)"}
-            meta={`${mainStops.length} arrêt${mainStops.length > 1 ? "s" : ""} sur le tracé principal`}
+            key={section.headsign}
+            title={`Vers ${section.headsign}`}
+            meta={`${section.stops.length} arrêt${section.stops.length > 1 ? "s" : ""} · du départ à l'arrivée`}
             hint="Appuyez sur un arrêt pour voir les horaires du jour."
             color={color}
             code={code}
-            stops={mainStops}
-            open={mainPassageOpen}
-            onToggle={() => setMainPassageOpen((value) => !value)}
+            stops={section.stops}
+            open={expandedPassageDirs.has(section.headsign)}
+            onToggle={() => {
+              setExpandedPassageDirs((prev) => {
+                const next = new Set(prev);
+                if (next.has(section.headsign)) {
+                  next.delete(section.headsign);
+                } else {
+                  next.add(section.headsign);
+                }
+                return next;
+              });
+            }}
             onStopPress={setLightboxStop}
           />
-        ) : null}
+        ))}
         {extraStops.length > 0 ? (
           <LinePassageStopsPanel
             title="Autres arrêts sur la ligne"
@@ -148,8 +216,18 @@ export default function LineScreen() {
             color={color}
             code={code}
             stops={extraStops}
-            open={extraPassageOpen}
-            onToggle={() => setExtraPassageOpen((value) => !value)}
+            open={expandedPassageDirs.has("__extra__")}
+            onToggle={() => {
+              setExpandedPassageDirs((prev) => {
+                const next = new Set(prev);
+                if (next.has("__extra__")) {
+                  next.delete("__extra__");
+                } else {
+                  next.add("__extra__");
+                }
+                return next;
+              });
+            }}
             onStopPress={setLightboxStop}
           />
         ) : null}

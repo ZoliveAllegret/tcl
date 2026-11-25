@@ -1,4 +1,12 @@
-import { collectLines, partitionStopsOnLine, sectionLines, stopsOnLine, uniqueStops } from "@/src/lines/groupLines";
+import {
+  collectLines,
+  finalizePassageOrder,
+  orientPassageOrder,
+  partitionStopsOnLine,
+  sectionLines,
+  stopsOnLine,
+  uniqueStops,
+} from "@/src/lines/groupLines";
 
 import { stop } from "./support";
 
@@ -11,6 +19,25 @@ test("uniqueStops fusionne les quais opposés d'une même ligne", () => {
   const stations = uniqueStops([south, north, bus, metro]);
   expect(stations.map((item) => item.name).sort()).toEqual(["Brotteaux", "Debourg", "Debourg"]);
   expect(stations.find((item) => item.id === 1)?.wheelchair).toBe(true);
+});
+
+test("finalizePassageOrder termine au headsign cible", () => {
+  const names = new Map<number, string>([
+    [1, "Gare de Vaise-G.Collomb"],
+    [2, "St Germain Gare"],
+    [3, "Champagne De Gaulle"],
+    [4, "L'Epoux"],
+  ]);
+  expect(finalizePassageOrder([1, 2, 3, 4], "St Germain Gare", names)).toEqual([1, 2]);
+});
+
+test("orientPassageOrder inverse quand la destination est en tête", () => {
+  const names = new Map<number, string>([
+    [1, "St Germain Gare"],
+    [2, "Gare de Vaise-G.Collomb"],
+  ]);
+  expect(orientPassageOrder([1, 2], "St Germain Gare", names)).toEqual([2, 1]);
+  expect(orientPassageOrder([1, 2], "Gare de Vaise-G.Collomb", names)).toEqual([1, 2]);
 });
 
 test("partitionStopsOnLine sépare tracé principal et arrêts hors ordre", () => {

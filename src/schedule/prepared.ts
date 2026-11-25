@@ -5,6 +5,7 @@ export type DataManifest = {
   stops: string;
   timetable: string;
   lineOrder?: string;
+  lineOrderDirections?: string;
 };
 
 const DATA_CACHE = "tcl-data-v1";
@@ -12,10 +13,12 @@ const DATA_CACHE = "tcl-data-v1";
 type CachedStops = { hash: string; stops: Stop[] };
 type CachedTimetable = { hash: string; table: PreparedTimetable };
 type CachedLineOrder = { hash: string; order: Record<string, number[]> };
+type CachedLineOrderDirections = { hash: string; order: Record<string, Record<string, number[]>> };
 
 let memoryStops: CachedStops | null = null;
 let memoryTable: CachedTimetable | null = null;
 let memoryLineOrder: CachedLineOrder | null = null;
+let memoryLineOrderDirections: CachedLineOrderDirections | null = null;
 let manifestTask: Promise<DataManifest> | null = null;
 let hydrateTask: Promise<void> | null = null;
 let checkTask: Promise<void> | null = null;
@@ -116,6 +119,10 @@ function currentLineOrder(): CachedLineOrder | null {
   return memoryLineOrder;
 }
 
+function currentLineOrderDirections(): CachedLineOrderDirections | null {
+  return memoryLineOrderDirections;
+}
+
 function loadManifest(): Promise<DataManifest> {
   if (!manifestTask) {
     manifestTask = fetch(dataUrl("manifest.json"), { cache: "no-store" })
@@ -158,6 +165,15 @@ async function hydrate(): Promise<void> {
           memoryLineOrder = {
             hash: cached.hash,
             order: JSON.parse(new TextDecoder().decode(cached.bytes)) as Record<string, number[]>,
+          };
+        }
+      }
+      if (!memoryLineOrderDirections) {
+        const cached = await readCached(dataUrl("line-order-directions.json"));
+        if (cached) {
+          memoryLineOrderDirections = {
+            hash: cached.hash,
+            order: JSON.parse(new TextDecoder().decode(cached.bytes)) as Record<string, Record<string, number[]>>,
           };
         }
       }
@@ -206,6 +222,25 @@ async function syncTimetable(manifest: DataManifest): Promise<void> {
   await remember(dataUrl("timetable.bin"), bytes, "application/octet-stream", hash);
 }
 
+async function syncLineOrderDirections(manifest: DataManifest): Promise<void> {
+  if (!manifest.lineOrderDirections) {
+    return;
+  }
+  if (memoryLineOrderDirections?.hash === manifest.lineOrderDirections) {
+    return;
+  }
+  const bytes = await download(dataUrl("line-order-directions.json"));
+  const hash = await fingerprint(bytes);
+  if (hash !== manifest.lineOrderDirections) {
+    throw new Error("L'ordre par sens ne correspond pas à la version annoncée.");
+  }
+  memoryLineOrderDirections = {
+    hash,
+    order: JSON.parse(new TextDecoder().decode(bytes)) as Record<string, Record<string, number[]>>,
+  };
+  await remember(dataUrl("line-order-directions.json"), bytes, "application/json", hash);
+}
+
 async function syncLineOrder(manifest: DataManifest): Promise<void> {
   if (!manifest.lineOrder) {
     return;
@@ -226,7 +261,12 @@ function checkForUpdates(): Promise<void> {
   if (!checkTask) {
     checkTask = (async () => {
       const manifest = await loadManifest();
-      await Promise.all([syncStops(manifest), syncTimetable(manifest), syncLineOrder(manifest)]);
+      await Promise.all([
+        syncStops(manifest),
+        syncTimetable(manifest),
+        syncLineOrder(manifest),
+        syncLineOrderDirections(manifest),
+      ]);
     })().catch((error: unknown) => {
       checkTask = null;
       throw error;
@@ -296,4 +336,14 @@ export async function loadPreparedLineOrder(): Promise<Record<string, number[]>>
   }
   await checkForUpdates();
   return currentLineOrder()?.order ?? {};
+}
+
+export async function loadPreparedLineOrderDirections(): Promise<Record<string, Record<string, number[]>>> {
+  await hydrate();
+  if (memoryLineOrderDirections) {
+    void checkForUpdates().catch(() => undefined);
+    return memoryLineOrderDirections.order;
+  }
+  await checkForUpdates();
+  return currentLineOrderDirections()?.order ?? {};
 }
